@@ -45,6 +45,15 @@ The Video Upload tab now includes an upload control, so schools can select the c
 1. Select the session (same as before) and leave the form saved.
 2. Use the “Choose clips” button to add the ordered video files (mp4/mov/avi). Browser uploads preserve order if you name them appropriately (e.g. `001.mp4`, `002.mp4`).
 3. Click **Upload to Cloudinary + Map** – the dashboard will stream each clip to Cloudinary, build the manifest, and map every URL into `data/video_map.csv` automatically.
-4. The success banner below the uploader confirms the mapping and you can refresh the dashboard to see camera 2 available for each pitch.
+  4. The success banner below the uploader confirms the mapping and you can refresh the dashboard to see camera 2 available for each pitch.
+
+### Persisting mappings in Neon
+
+If you want all camera 2 metadata to survive redeploys without manually committing `data/video_map.csv`, configure a Neon/Postgres database and set these environment variables before running uploads:
+
+1. `VIDEO_MAP_DB_HOST`, `VIDEO_MAP_DB_USER`, `VIDEO_MAP_DB_PASSWORD`, `VIDEO_MAP_DB_NAME` (and optionally `VIDEO_MAP_DB_PORT`, `VIDEO_MAP_DB_SSLMODE`, `VIDEO_MAP_DB_CHANNEL_BINDING`). You can also provide a full `VIDEO_MAP_DB_URL` or point to `auth_db_config.yml` via `VIDEO_MAP_DB_CONFIG`.
+2. After a successful upload (through the dashboard, `upload_camera2_clips.R`, or `map_manual_video_uploads.R`), the helper stores each clip’s `PlayID` → Cloudinary URL mapping in the Neon table.
+3. The nightly `automated_data_sync.R` job now pulls that table and regenerates `data/video_map.csv` before committing, so the latest videos appear in every deploy automatically.
+4. You can query Neon directly to audit what’s been uploaded without bumping the repo, and the synchronization script handles the rest.
 
 Repeat for each new session; the script overwrites any prior assignments for the same `session_id` + `camera_slot` combination so you can re-run if a batch needs to be remapped.
