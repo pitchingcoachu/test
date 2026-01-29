@@ -19,7 +19,7 @@ library(memoise)  # for caching expensive computations in Custom Reports
 library(shinymanager)  # for custom authentication with cool login page
 # --- media uploads (Cloudinary) ---
 # raise upload size if needed (50 MB here)
-options(shiny.maxRequestSize = 4 * 1024^3)
+options(shiny.maxRequestSize = 50 * 1024^2)
 
 # Set default plotting background to transparent
 options(shiny.plot.res = 96)
@@ -2371,96 +2371,6 @@ sanitize_for_dt <- function(dfx) {
   dfx
 }
 
-format_decimal_columns <- function(df) {
-  if (!is.data.frame(df) || !nrow(df)) return(df)
-
-  safe_numeric <- function(x) {
-    if (is.numeric(x)) return(x)
-    if (is.factor(x)) x <- as.character(x)
-    if (!is.character(x)) return(rep(NA_real_, length(x)))
-    cleaned <- gsub("%", "", x, fixed = TRUE)
-    cleaned <- trimws(cleaned)
-    cleaned[cleaned == ""] <- NA_character_
-    suppressWarnings(as.numeric(cleaned))
-  }
-
-  fmt_rate3 <- function(x) {
-    v <- safe_numeric(x)
-    sapply(v, function(val) {
-      if (!is.finite(val)) return("")
-      sub("^0", "", sprintf("%.3f", round(val, 3)))
-    }, USE.NAMES = FALSE)
-  }
-
-  fmt_pct <- function(x) {
-    v <- safe_numeric(x)
-    if (!any(is.finite(v))) return(rep("", length(v)))
-    scale100 <- if (all(is.na(v) | v <= 1.5, na.rm = TRUE)) 100 else 1
-    sapply(v, function(val) {
-      if (!is.finite(val)) return("")
-      paste0(round(val * scale100, 1), "%")
-    }, USE.NAMES = FALSE)
-  }
-
-  fmt_round <- function(x, digits = 1) {
-    v <- safe_numeric(x)
-    sapply(v, function(val) {
-      if (!is.finite(val)) return("")
-      as.character(round(val, digits))
-    }, USE.NAMES = FALSE)
-  }
-
-  fmt_2dec <- function(x) {
-    v <- safe_numeric(x)
-    sapply(v, function(val) {
-      if (!is.finite(val)) return("")
-      sprintf("%.2f", val)
-    }, USE.NAMES = FALSE)
-  }
-
-  apply_formatter <- function(cols, formatter) {
-    for (col in cols) {
-      if (!col %in% names(df)) next
-      df[[col]] <- formatter(df[[col]])
-    }
-  }
-
-  pct_cols <- c("Swing%","Whiff%","CSW%","GB%","K%","BB%","Barrel%","FPS%","Called-S%",
-                "Take%","Chase%","GoZoneSw%","IZswing%","EdgeSwing%","PosSD%","E+A%",
-                "Early%","Ahead%","Strike%","InZone%","Comp%","Usage","QP%","1-1W%")
-  apply_formatter(pct_cols, fmt_pct)
-
-  rate_cols <- c("AVG","SLG","OBP","OPS","wOBA","xWOBA","ISO","xISO","BABIP")
-  apply_formatter(rate_cols, fmt_rate3)
-
-  round1_cols <- c("Velo","Max","IVB","HB","Distance","EV","LA","Height","Side",
-                   "VAA","HAA","Ext","RV/100","Stuff+","Ctrl+","QP+","Pitching+")
-  apply_formatter(round1_cols, function(x) fmt_round(x, digits = 1))
-
-  round0_cols <- c("Spin","SpinRate")
-  apply_formatter(round0_cols, fmt_round)
-  
-  # Integer count columns (display as whole numbers)
-  count_cols_int <- c("Swings","Takes","Called-S","Whiffs","Chases","IZswings","Barrels","FPS","EdgeSwings","PosSD","GoZoneSw")
-  for (col in count_cols_int) {
-    if (col %in% names(df)) {
-      v <- suppressWarnings(as.numeric(df[[col]]))
-      df[[col]] <- sapply(v, function(val) {
-        if (!is.finite(val)) return("")
-        as.character(round(val))
-      }, USE.NAMES = FALSE)
-    }
-  }
-
-  apply_formatter(c("FIP","WHIP"), fmt_2dec)
-
-  if ("SpinEff" %in% names(df)) {
-    df$SpinEff <- fmt_pct(df$SpinEff)
-  }
-
-  df
-}
-
 # Safe wrapper for compute_process_results with error handling
 safe_compute_process_results <- function(df, mode = "All") {
   tryCatch({
@@ -2538,7 +2448,6 @@ datatable_with_colvis <- function(df, lock = character(0), remember = TRUE, defa
     }
     
     df <- sanitize_for_dt(df)
-    df <- format_decimal_columns(df)
     
     # Wrap blank_ea_except_all in tryCatch to handle column mismatches gracefully
     df <- tryCatch({
@@ -2714,16 +2623,8 @@ live_cols         <- c("Pitch","#","Velo","Max","IVB","HB","FPS%","E+A%","InZone
 usage_cols        <- c("Pitch","#","Usage","0-0","Behind","Even","Ahead","<2K","2K")
 perf_cols         <- c("Pitch","#","BF","RV/100","InZone%","Comp%","Strike%","FPS%","Early%","Ahead%","E+A%","1-1W%","K%","BB%","Whiff%","CSW%","EV","LA","Ctrl+","QP+","Pitching+")
 
-# Raw count columns (for custom tables)
-count_cols        <- c("Swings","Takes","Called-S","Whiffs","Chases","IZswings","Barrels","FPS","EdgeSwings","PosSD","GoZoneSw")
-
 # ---- unified list for the pickers + a helper to compute visibility
-all_table_cols <- unique(c(stuff_cols, process_cols, results_cols, results_cols_live, bullpen_cols, live_cols, usage_cols, perf_cols, count_cols, "Overall"))
-
-# Verify count columns are included (for debugging)
-message("Count columns defined: ", paste(count_cols, collapse = ", "))
-message("Total columns available: ", length(all_table_cols))
-message("Count columns in all_table_cols: ", paste(intersect(count_cols, all_table_cols), collapse = ", "))
+all_table_cols <- unique(c(stuff_cols, process_cols, results_cols, results_cols_live, bullpen_cols, live_cols, usage_cols, perf_cols, "Overall"))
 
 visible_set_for <- function(mode, custom = character(0), session_type = NULL) {
   if (identical(mode, "Process")) return(process_cols)
@@ -7311,8 +7212,8 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           # Filter to only allowed campers (as batters)
           d <- dplyr::filter(d, Batter %in% ALLOWED_CAMPERS)
         } else if (input$teamType == TEAM_CODE) {
-          # For GCU hitting: show only the approved hitters (exclude campers, opponents)
-          d <- dplyr::filter(d, Batter %in% ALLOWED_HITTERS)
+          # For GCU hitting: show all non-camper batters
+          d <- dplyr::filter(d, !(Batter %in% ALLOWED_CAMPERS))
         } else if (input$teamType == "Opponents") {
           # Show only opponent batters
           all_known <- unique(c(ALLOWED_HITTERS, ALLOWED_CAMPERS))
@@ -8454,19 +8355,11 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
     # --- “Results” only toggle (UI) ---
     output$dpButtons <- renderUI({
       sel <- isolate(input$dpMode); if (is.null(sel)) sel <- "Results"
-      
-      # Get custom table names (in order they were created)
-      ct <- custom_tables()
-      ct_names <- if (length(ct) > 0) names(ct) else character(0)
-      
-      # Build choices: base tables, then custom tables in order, then "Custom" at the end
-      table_choices <- c("Results", "Swing Decisions", ct_names, "Custom")
-      
       tagList(
         div(style = "margin-bottom: 2px; font-weight: bold; font-size: 12px;", "Tables:"),
         selectInput(
           ns("dpMode"), label = NULL,
-          choices  = table_choices,
+          choices  = c("Results", "Swing Decisions", "Custom"),
           selected = sel,
           width = "200px"
         ),
@@ -8489,11 +8382,8 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
             textInput(ns("dpCustomName"), "Name:", value = ""),
             selectizeInput(
               ns("dpCustomCols"), label = "Columns (drag to order):",
-              choices  = c("#","PA","AB","AVG","SLG","OBP","OPS","wOBA","xWOBA","ISO","xISO","BABIP",
-                           "Velo","IVB","HB","Distance","RV/100","1-1W%","QP%","QP+",
-                           "Swing%","FPS%","Called-S%","Take%","Whiff%","CSW%","GB%","K%","BB%","Barrel%",
-                           "Chase%","GoZoneSw%","IZswing%","EdgeSwing%","PosSD%","EV","LA",
-                           "Swings","Takes","Called-S","Whiffs","Chases","IZswings","Barrels","FPS","EdgeSwings","PosSD","GoZoneSw"),
+              choices  = c("PA","AB","AVG","SLG","OBP","OPS","wOBA","xWOBA","ISO","xISO","BABIP",
+                           "Swing%","Whiff%","CSW%","GB%","K%","BB%","Barrel%","EV","LA"),
               multiple = TRUE,
               options  = list(plugins = list("drag_drop","remove_button"), placeholder = "Choose columns…")
             ),
@@ -8707,23 +8597,6 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
             wOBA = safe_div(wOBA_num, wOBA_den)
           )
         
-        # Calculate raw barrel counts per split
-        barrel_counts <- df %>%
-          dplyr::filter(
-            !is.na(SessionType),
-            grepl("live|game|ab", tolower(SessionType)),
-            !is.na(PitchCall),
-            PitchCall == "InPlay",
-            is.finite(ExitSpeed),
-            is.finite(Angle),
-            ExitSpeed >= 95,
-            Angle >= 10,
-            Angle <= 35
-          ) %>%
-          dplyr::group_by(SplitColumn) %>%
-          dplyr::summarise(Barrels = dplyr::n(), .groups = "drop") %>%
-          dplyr::rename(!!split_col_name := SplitColumn)
-        
         # Extras (xWOBA/xISO/BABIP/Barrel%) — force numeric & use correct name
         extras_raw <- compute_process_results(df)
         extras <- extras_raw %>%
@@ -8743,118 +8616,6 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           dplyr::select(SplitColumn, xWOBA, xISO, BABIP, `Barrel%`) %>%
           dplyr::rename(!!split_col_name := SplitColumn)
         
-        # Additional stats for custom tables: Velo, IVB, HB, Distance, RV/100, discipline stats
-        pitch_metrics <- df %>%
-          dplyr::group_by(SplitColumn) %>%
-          dplyr::summarise(
-            Velo = mean(RelSpeed, na.rm = TRUE),
-            IVB = mean(InducedVertBreak, na.rm = TRUE),
-            HB = mean(HorzBreak, na.rm = TRUE),
-            Distance = mean(suppressWarnings(as.numeric(Distance[SessionType == "Live" & PitchCall == "InPlay"])), na.rm = TRUE),
-            `RV/100` = {
-              rv <- sum(suppressWarnings(as.numeric(RunsScored)), na.rm = TRUE)
-              safe_div(rv * 100, dplyr::n())
-            },
-            .groups = "drop"
-          ) %>%
-          dplyr::rename(!!split_col_name := SplitColumn)
-        
-        # Discipline stats per split
-        discipline_stats <- df %>%
-          dplyr::group_by(SplitColumn) %>%
-          dplyr::summarise(
-            total_pitches = dplyr::n(),
-            total_swings = sum(PitchCall %in% swing_levels, na.rm = TRUE),
-            first_pitch = sum(Balls == 0 & Strikes == 0, na.rm = TRUE),
-            fps_strikes = sum(Balls == 0 & Strikes == 0 & 
-                              PitchCall %in% c("StrikeCalled","StrikeSwinging","FoulBall","FoulBallNotFieldable","FoulBallFieldable","InPlay"), 
-                              na.rm = TRUE),
-            called_strikes = sum(PitchCall == "StrikeCalled", na.rm = TRUE),
-            takes = sum(PitchCall %in% c("BallCalled","StrikeCalled"), na.rm = TRUE),
-            chase_pitches = sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                               (PlateLocSide < ZONE_LEFT | PlateLocSide > ZONE_RIGHT | 
-                                PlateLocHeight < ZONE_BOTTOM | PlateLocHeight > ZONE_TOP), na.rm = TRUE),
-            chase_swings = sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                              (PlateLocSide < ZONE_LEFT | PlateLocSide > ZONE_RIGHT | 
-                               PlateLocHeight < ZONE_BOTTOM | PlateLocHeight > ZONE_TOP) &
-                              PitchCall %in% swing_levels, na.rm = TRUE),
-            gozone_pitches = sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                                PlateLocSide >= ZONE_LEFT & PlateLocSide <= ZONE_RIGHT &
-                                PlateLocHeight >= ZONE_BOTTOM & PlateLocHeight <= ZONE_TOP, na.rm = TRUE),
-            gozone_swings = sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                               PlateLocSide >= ZONE_LEFT & PlateLocSide <= ZONE_RIGHT &
-                               PlateLocHeight >= ZONE_BOTTOM & PlateLocHeight <= ZONE_TOP &
-                               PitchCall %in% swing_levels, na.rm = TRUE),
-            iz_pitches = sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                            PlateLocSide >= ZONE_LEFT & PlateLocSide <= ZONE_RIGHT &
-                            PlateLocHeight >= ZONE_BOTTOM & PlateLocHeight <= ZONE_TOP, na.rm = TRUE),
-            iz_swings = sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                           PlateLocSide >= ZONE_LEFT & PlateLocSide <= ZONE_RIGHT &
-                           PlateLocHeight >= ZONE_BOTTOM & PlateLocHeight <= ZONE_TOP &
-                           PitchCall %in% swing_levels, na.rm = TRUE),
-            edge_pitches = sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                              (abs(PlateLocSide - ZONE_LEFT) < 0.15 | abs(PlateLocSide - ZONE_RIGHT) < 0.15 |
-                               abs(PlateLocHeight - ZONE_BOTTOM) < 0.15 | abs(PlateLocHeight - ZONE_TOP) < 0.15), na.rm = TRUE),
-            edge_swings = sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                             (abs(PlateLocSide - ZONE_LEFT) < 0.15 | abs(PlateLocSide - ZONE_RIGHT) < 0.15 |
-                              abs(PlateLocHeight - ZONE_BOTTOM) < 0.15 | abs(PlateLocHeight - ZONE_TOP) < 0.15) &
-                             PitchCall %in% swing_levels, na.rm = TRUE),
-            one_one_count = sum(Balls == 1 & Strikes == 1, na.rm = TRUE),
-            one_one_whiffs = sum(Balls == 1 & Strikes == 1 & PitchCall == "StrikeSwinging", na.rm = TRUE),
-            qp_pitches = sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                            PlateLocSide >= (ZONE_LEFT + ZONE_RIGHT)/2 - 7/24 &
-                            PlateLocSide <= (ZONE_LEFT + ZONE_RIGHT)/2 + 7/24 &
-                            PlateLocHeight >= (ZONE_BOTTOM + ZONE_TOP)/2 - 7/24 &
-                            PlateLocHeight <= (ZONE_BOTTOM + ZONE_TOP)/2 + 7/24, na.rm = TRUE),
-            possd_points = {
-              green_xmin <- (ZONE_LEFT + ZONE_RIGHT)/2 - 7/24
-              green_xmax <- (ZONE_LEFT + ZONE_RIGHT)/2 + 7/24
-              green_ymin <- (ZONE_BOTTOM + ZONE_TOP)/2 - 7/24
-              green_ymax <- (ZONE_BOTTOM + ZONE_TOP)/2 + 7/24
-              
-              sum(dplyr::case_when(
-                is.na(PitchCall) ~ 0,
-                PitchCall %in% swing_levels & 
-                  !is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                  PlateLocSide >= green_xmin & PlateLocSide <= green_xmax &
-                  PlateLocHeight >= green_ymin & PlateLocHeight <= green_ymax ~ 1,
-                !(PitchCall %in% swing_levels) &
-                  !is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                  (PlateLocSide < ZONE_LEFT | PlateLocSide > ZONE_RIGHT |
-                   PlateLocHeight < ZONE_BOTTOM | PlateLocHeight > ZONE_TOP) ~ 1,
-                TRUE ~ 0
-              ), na.rm = TRUE)
-            },
-            .groups = "drop"
-          ) %>%
-          dplyr::mutate(
-            `FPS%` = safe_div(fps_strikes, first_pitch),
-            `Called-S%` = safe_div(called_strikes, total_pitches),
-            `Take%` = safe_div(takes, total_pitches),
-            `Chase%` = safe_div(chase_swings, chase_pitches),
-            `GoZoneSw%` = safe_div(gozone_swings, gozone_pitches),
-            `IZswing%` = safe_div(iz_swings, iz_pitches),
-            `EdgeSwing%` = safe_div(edge_swings, edge_pitches),
-            `1-1W%` = safe_div(one_one_whiffs, one_one_count),
-            `QP%` = safe_div(qp_pitches, total_pitches),
-            `QP+` = safe_div(qp_pitches, total_pitches) * 100,  # QP+ as index
-            `PosSD%` = safe_div(possd_points, total_pitches),
-            # Raw count columns
-            Swings = total_swings,
-            FPS = fps_strikes,
-            `Called-S` = called_strikes,
-            Takes = takes,
-            Chases = chase_swings,
-            GoZoneSw = gozone_swings,
-            IZswings = iz_swings,
-            EdgeSwings = edge_swings,
-            PosSD = possd_points
-          ) %>%
-          dplyr::select(SplitColumn, `FPS%`, `Called-S%`, `Take%`, `Chase%`, `GoZoneSw%`, 
-                       `IZswing%`, `EdgeSwing%`, `1-1W%`, `QP%`, `QP+`, `PosSD%`,
-                       Swings, FPS, `Called-S`, Takes, Chases, GoZoneSw, IZswings, EdgeSwings, PosSD) %>%
-          dplyr::rename(!!split_col_name := SplitColumn)
-        
         # Join and build output rows per pitch type
         out <- per_type %>%
           dplyr::left_join(pitch_totals, by = "SplitColumn") %>%
@@ -8869,13 +8630,11 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           ) %>%
           dplyr::transmute(
             !!split_col_name := as.character(SplitColumn),
-            `#`        = Pitches,
             PA, AB, AVG, SLG, OBP, OPS,
             wOBA, xWOBA = NA_real_,
             ISO, xISO = NA_real_, BABIP = NA_real_,
             `Swing%`, `Whiff%`, `GB%`, `K%`, `BB%`,
-            `Barrel%` = NA_real_, EV, LA,
-            Whiffs  # Raw count
+            `Barrel%` = NA_real_, EV, LA
           )
         
         # Join extras if we have the right column
@@ -8896,15 +8655,6 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
             ) %>%
             dplyr::select(-dplyr::matches("\\.(x|y)$"))
         }
-        
-        # Join pitch metrics (Velo, IVB, HB, Distance, RV/100)
-        out <- out %>% dplyr::left_join(pitch_metrics, by = split_col_name)
-        
-        # Join discipline stats (FPS%, Called-S%, Take%, Chase%, etc.)
-        out <- out %>% dplyr::left_join(discipline_stats, by = split_col_name)
-        
-        # Join barrel counts
-        out <- out %>% dplyr::left_join(barrel_counts, by = split_col_name)
         
         # ----- ALL row (same definitions as above, but ungrouped; keep your guards) -----
         PAt <- nrow(term)
@@ -8932,18 +8682,15 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           safe_div(sum(d$TaggedHitType == "GroundBall", na.rm = TRUE),
                    sum(!is.na(d$TaggedHitType),         na.rm = TRUE))
         }
-        all_barrels <- sum(bbe$ExitSpeed >= 95 & bbe$Angle >= 10 & bbe$Angle <= 35, na.rm = TRUE)
         
         # Create all_row with dynamic column name
         all_row_data <- list(
-          `#`      = pitches,
-          PA       = PAt,
-          AB       = ABt,
-          AVG      = safe_div(H, ABt),
-          SLG      = safe_div(TB, ABt),
-          OBP      = safe_div(H + BBc_all + HBP_all, PAt),
-          OPS      = NA_real_,  # filled just below
-          xWOBA    = NA_real_, xISO = NA_real_, BABIP = NA_real_,
+          PA = PAt, AB = ABt,
+          AVG = safe_div(H, ABt),
+          SLG = safe_div(TB, ABt),
+          OBP = safe_div(H + BBc_all + HBP_all, PAt),
+          OPS = NA_real_,  # filled just below
+          xWOBA = NA_real_, xISO = NA_real_, BABIP = NA_real_,
           `Swing%` = safe_div(swings, total_pitches),
           `Whiff%` = safe_div(whiffs, swings),
           `CSW%`   = safe_div(csw_all_num, total_pitches),
@@ -8951,17 +8698,15 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           `K%`     = safe_div(Kct_all, PAt),
           `BB%`    = safe_div(BBc_all, PAt),
           `Barrel%`= NA_real_,
-          EV       = nz_mean(bbe$ExitSpeed),
-          LA       = nz_mean(bbe$Angle),
-          ISO      = safe_div(TB, ABt) - safe_div(H, ABt),
-          wOBA     = {
+          EV = nz_mean(bbe$ExitSpeed),
+          LA = nz_mean(bbe$Angle),
+          ISO = safe_div(TB, ABt) - safe_div(H, ABt),
+          wOBA = {
             uBB_all <- BBc_all - IBB_all
             num <- 0.690*uBB_all + 0.722*HBP_all + 0.888*H1 + 1.271*H2 + 1.616*H3 + 2.101*HR
             den <- ABt + BBc_all - IBB_all + Sac_all + HBP_all
             safe_div(num, den)
-          },
-          Whiffs = whiffs,
-          Barrels = all_barrels
+          }
         )
         all_row_data[[split_col_name]] <- "All"
         all_row <- tibble::as_tibble(all_row_data)
@@ -8991,91 +8736,6 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           all_row$BABIP     <- extras_all$BABIP[1]
           all_row$`Barrel%` <- extras_all$`Barrel%`[1]
         }
-        
-        # Add pitch metrics and discipline stats to All row
-        all_row$Velo <- mean(df$RelSpeed, na.rm = TRUE)
-        all_row$IVB <- mean(df$InducedVertBreak, na.rm = TRUE)
-        all_row$HB <- mean(df$HorzBreak, na.rm = TRUE)
-        all_row$Distance <- mean(suppressWarnings(as.numeric(df$Distance[df$SessionType == "Live" & df$PitchCall == "InPlay"])), na.rm = TRUE)
-        all_row$`RV/100` <- safe_div(sum(suppressWarnings(as.numeric(df$RunsScored)), na.rm = TRUE) * 100, nrow(df))
-        
-        # Discipline stats for All row
-        first_pitch_all <- sum(df$Balls == 0 & df$Strikes == 0, na.rm = TRUE)
-        fps_strikes_all <- sum(df$Balls == 0 & df$Strikes == 0 & 
-                              df$PitchCall %in% c("StrikeCalled","StrikeSwinging","FoulBall","FoulBallNotFieldable","FoulBallFieldable","InPlay"), 
-                              na.rm = TRUE)
-        called_strikes_all <- sum(df$PitchCall == "StrikeCalled", na.rm = TRUE)
-        takes_all <- sum(df$PitchCall %in% c("BallCalled","StrikeCalled"), na.rm = TRUE)
-        chase_pitches_all <- sum(!is.na(df$PlateLocSide) & !is.na(df$PlateLocHeight) &
-                               (df$PlateLocSide < ZONE_LEFT | df$PlateLocSide > ZONE_RIGHT | 
-                                df$PlateLocHeight < ZONE_BOTTOM | df$PlateLocHeight > ZONE_TOP), na.rm = TRUE)
-        chase_swings_all <- sum(!is.na(df$PlateLocSide) & !is.na(df$PlateLocHeight) &
-                              (df$PlateLocSide < ZONE_LEFT | df$PlateLocSide > ZONE_RIGHT | 
-                               df$PlateLocHeight < ZONE_BOTTOM | df$PlateLocHeight > ZONE_TOP) &
-                              df$PitchCall %in% swing_levels, na.rm = TRUE)
-        gozone_pitches_all <- sum(!is.na(df$PlateLocSide) & !is.na(df$PlateLocHeight) &
-                                df$PlateLocSide >= ZONE_LEFT & df$PlateLocSide <= ZONE_RIGHT &
-                                df$PlateLocHeight >= ZONE_BOTTOM & df$PlateLocHeight <= ZONE_TOP, na.rm = TRUE)
-        gozone_swings_all <- sum(!is.na(df$PlateLocSide) & !is.na(df$PlateLocHeight) &
-                               df$PlateLocSide >= ZONE_LEFT & df$PlateLocSide <= ZONE_RIGHT &
-                               df$PlateLocHeight >= ZONE_BOTTOM & df$PlateLocHeight <= ZONE_TOP &
-                               df$PitchCall %in% swing_levels, na.rm = TRUE)
-        iz_pitches_all <- gozone_pitches_all  # Same as GoZone for now
-        iz_swings_all <- gozone_swings_all
-        edge_pitches_all <- sum(!is.na(df$PlateLocSide) & !is.na(df$PlateLocHeight) &
-                              (abs(df$PlateLocSide - ZONE_LEFT) < 0.15 | abs(df$PlateLocSide - ZONE_RIGHT) < 0.15 |
-                               abs(df$PlateLocHeight - ZONE_BOTTOM) < 0.15 | abs(df$PlateLocHeight - ZONE_TOP) < 0.15), na.rm = TRUE)
-        edge_swings_all <- sum(!is.na(df$PlateLocSide) & !is.na(df$PlateLocHeight) &
-                             (abs(df$PlateLocSide - ZONE_LEFT) < 0.15 | abs(df$PlateLocSide - ZONE_RIGHT) < 0.15 |
-                              abs(df$PlateLocHeight - ZONE_BOTTOM) < 0.15 | abs(df$PlateLocHeight - ZONE_TOP) < 0.15) &
-                             df$PitchCall %in% swing_levels, na.rm = TRUE)
-        one_one_count_all <- sum(df$Balls == 1 & df$Strikes == 1, na.rm = TRUE)
-        one_one_whiffs_all <- sum(df$Balls == 1 & df$Strikes == 1 & df$PitchCall == "StrikeSwinging", na.rm = TRUE)
-        qp_pitches_all <- sum(!is.na(df$PlateLocSide) & !is.na(df$PlateLocHeight) &
-                            df$PlateLocSide >= (ZONE_LEFT + ZONE_RIGHT)/2 - 7/24 &
-                            df$PlateLocSide <= (ZONE_LEFT + ZONE_RIGHT)/2 + 7/24 &
-                            df$PlateLocHeight >= (ZONE_BOTTOM + ZONE_TOP)/2 - 7/24 &
-                            df$PlateLocHeight <= (ZONE_BOTTOM + ZONE_TOP)/2 + 7/24, na.rm = TRUE)
-        
-        green_xmin <- (ZONE_LEFT + ZONE_RIGHT)/2 - 7/24
-        green_xmax <- (ZONE_LEFT + ZONE_RIGHT)/2 + 7/24
-        green_ymin <- (ZONE_BOTTOM + ZONE_TOP)/2 - 7/24
-        green_ymax <- (ZONE_BOTTOM + ZONE_TOP)/2 + 7/24
-        possd_points_all <- sum(dplyr::case_when(
-          is.na(df$PitchCall) ~ 0,
-          df$PitchCall %in% swing_levels & 
-            !is.na(df$PlateLocSide) & !is.na(df$PlateLocHeight) &
-            df$PlateLocSide >= green_xmin & df$PlateLocSide <= green_xmax &
-            df$PlateLocHeight >= green_ymin & df$PlateLocHeight <= green_ymax ~ 1,
-          !(df$PitchCall %in% swing_levels) &
-            !is.na(df$PlateLocSide) & !is.na(df$PlateLocHeight) &
-            (df$PlateLocSide < ZONE_LEFT | df$PlateLocSide > ZONE_RIGHT |
-             df$PlateLocHeight < ZONE_BOTTOM | df$PlateLocHeight > ZONE_TOP) ~ 1,
-          TRUE ~ 0
-        ), na.rm = TRUE)
-        
-        all_row$`FPS%` <- safe_div(fps_strikes_all, first_pitch_all)
-        all_row$`Called-S%` <- safe_div(called_strikes_all, pitches)
-        all_row$`Take%` <- safe_div(takes_all, pitches)
-        all_row$`Chase%` <- safe_div(chase_swings_all, chase_pitches_all)
-        all_row$`GoZoneSw%` <- safe_div(gozone_swings_all, gozone_pitches_all)
-        all_row$`IZswing%` <- safe_div(iz_swings_all, iz_pitches_all)
-        all_row$`EdgeSwing%` <- safe_div(edge_swings_all, edge_pitches_all)
-        all_row$`1-1W%` <- safe_div(one_one_whiffs_all, one_one_count_all)
-        all_row$`QP%` <- safe_div(qp_pitches_all, pitches)
-        all_row$`QP+` <- safe_div(qp_pitches_all, pitches) * 100
-        all_row$`PosSD%` <- safe_div(possd_points_all, pitches)
-        
-        # Add count columns to All row
-        all_row$Swings <- sum(df$PitchCall %in% swing_levels, na.rm = TRUE)
-        all_row$FPS <- fps_strikes_all
-        all_row$`Called-S` <- called_strikes_all
-        all_row$Takes <- takes_all
-        all_row$Chases <- chase_swings_all
-        all_row$GoZoneSw <- gozone_swings_all
-        all_row$IZswings <- iz_swings_all
-        all_row$EdgeSwings <- edge_swings_all
-        all_row$PosSD <- possd_points_all
         
         # Add Even/Ahead/Behind summary rows if splitting by Count (Hitting Suite)
         hit_count_state_rows <- NULL
@@ -9186,14 +8846,11 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         
         # Bind, coerce numerics (prevents blanks), then format
         num_cols <- c("PA","AB","AVG","SLG","OBP","OPS","wOBA","xWOBA","ISO","xISO","BABIP",
-                      "Swing%","Whiff%","GB%","K%","BB%","Barrel%","EV","LA",
-                      "Velo","IVB","HB","Distance","RV/100",
-                      "FPS%","Called-S%","Take%","Chase%","GoZoneSw%","IZswing%",
-                      "EdgeSwing%","1-1W%","QP%","QP+","PosSD%")
+                      "Swing%","Whiff%","GB%","K%","BB%","Barrel%","EV","LA")
         
         df_out <- dplyr::bind_rows(out, hit_count_state_rows, all_row) %>%
           dplyr::mutate(
-            dplyr::across(dplyr::all_of(intersect(num_cols, names(.))), ~ suppressWarnings(as.numeric(.)))
+            dplyr::across(dplyr::all_of(num_cols), ~ suppressWarnings(as.numeric(.)))
           )
         
         # Keep pitch type order consistent with other suites
@@ -9217,9 +8874,7 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         
         # Display formatting
         tryCatch({
-          pct_cols  <- c("Swing%","Whiff%","CSW%","GB%","K%","BB%","Barrel%",
-                        "FPS%","Called-S%","Take%","Chase%","GoZoneSw%","IZswing%",
-                        "EdgeSwing%","1-1W%","QP%","PosSD%")
+          pct_cols  <- c("Swing%","Whiff%","CSW%","GB%","K%","BB%","Barrel%")
           rate_cols <- c("AVG","SLG","OBP","OPS","wOBA","xWOBA","ISO","xISO","BABIP")
           
           # Only format columns that exist
@@ -9246,24 +8901,6 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           if ("LA" %in% names(df_out)) {
             df_out$LA <- ifelse(is.finite(suppressWarnings(as.numeric(df_out$LA))), 
                                 round(suppressWarnings(as.numeric(df_out$LA)), 1), "")
-          }
-          for (col in c("Velo", "IVB", "HB")) {
-            if (col %in% names(df_out)) {
-              df_out[[col]] <- ifelse(is.finite(suppressWarnings(as.numeric(df_out[[col]]))),
-                                      round(suppressWarnings(as.numeric(df_out[[col]])), 1), "")
-            }
-          }
-          if ("Distance" %in% names(df_out)) {
-            df_out$Distance <- ifelse(is.finite(suppressWarnings(as.numeric(df_out$Distance))),
-                                      round(suppressWarnings(as.numeric(df_out$Distance))), "")
-          }
-          if ("RV/100" %in% names(df_out)) {
-            df_out$`RV/100` <- ifelse(is.finite(suppressWarnings(as.numeric(df_out$`RV/100`))),
-                                      round(suppressWarnings(as.numeric(df_out$`RV/100`)), 2), "")
-          }
-          if ("QP+" %in% names(df_out)) {
-            df_out$`QP+` <- ifelse(is.finite(suppressWarnings(as.numeric(df_out$`QP+`))),
-                                   round(suppressWarnings(as.numeric(df_out$`QP+`)), 1), "")
           }
         }, error = function(e) {
           # If formatting fails, continue with unformatted data
@@ -9545,42 +9182,21 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
           }
         }
         
-        # Visible set: Results vs Custom vs Saved Custom Table
+        # Visible set: Results vs Custom
         mode   <- input$dpMode
         if (is.null(mode)) mode <- "Results"
         custom <- input$dpCustomCols; if (is.null(custom)) custom <- character(0)
         base_cols <- c(split_col_name,"PA","AB","AVG","SLG","OBP","OPS","wOBA","xWOBA","ISO","xISO","BABIP",
                        "Swing%","Whiff%","GB%","K%","BB%","Barrel%","EV","LA")
-        
-        # Check if mode is a saved custom table name
-        ct <- custom_tables()
-        is_saved_custom <- !is.null(mode) && mode %in% names(ct)
-        
-        if (identical(mode, "Custom") || is_saved_custom) {
-          # If it's a saved custom table, use those columns
-          if (is_saved_custom) {
-            custom <- ct[[mode]]$cols
-          }
-          
-          # Replace "Pitch" with split_col_name in custom if present
-          if ("Pitch" %in% custom) {
-            custom <- custom[custom != "Pitch"]
-          }
-          # Preserve custom column order, ensuring split column is first
-          visible_set <- c(split_col_name, custom)
-          # Remove duplicates while preserving order
-          visible_set <- visible_set[!duplicated(visible_set)]
-        } else {
-          visible_set <- base_cols
+        # Replace "Pitch" with split_col_name in custom if present
+        if ("Pitch" %in% custom && split_col_name != "Pitch") {
+          custom <- c(split_col_name, setdiff(custom, "Pitch"))
         }
+        visible_set <- if (identical(mode, "Custom")) unique(c(split_col_name, custom)) else base_cols
         
-        # Ensure visible_set only contains valid column names (preserve order)
-        valid_visible <- visible_set[visible_set %in% names(df_dt)]
+        # Ensure visible_set only contains valid column names
+        valid_visible <- intersect(visible_set, names(df_dt))
         if (!length(valid_visible)) valid_visible <- split_col_name
-        
-        # Reorder df_dt columns to match visible order + remaining columns
-        remaining_cols <- setdiff(names(df_dt), valid_visible)
-        df_dt <- df_dt[, c(valid_visible, remaining_cols), drop = FALSE]
         
         datatable_with_colvis(
           df_dt,
@@ -9616,59 +9232,6 @@ mod_hit_server <- function(id, is_active = shiny::reactive(TRUE), global_date_ra
         )
       })
     }, server = FALSE)
-    
-    # --- Custom table save/delete observers ---
-    observeEvent(input$dpSaveCustom, {
-      nm <- trimws(input$dpCustomName %||% "")
-      cols <- input$dpCustomCols %||% character(0)
-      if (!nzchar(nm) || !length(cols)) {
-        showNotification("Please enter a name and choose at least one column.", type = "warning")
-        return()
-      }
-      # Get is_admin function safely
-      is_admin_fun <- get0("is_admin", mode = "function", inherits = TRUE)
-      is_admin_val <- if (!is.null(is_admin_fun)) {
-        tryCatch(is_admin_fun(), error = function(e) FALSE)
-      } else {
-        FALSE
-      }
-      scope <- if (isTRUE(is_admin_val) && isTRUE(input$dpCustomGlobal)) GLOBAL_SCOPE else current_school()
-      ct <- custom_tables()
-      ct[[nm]] <- list(cols = cols, school_code = scope)
-      custom_tables(ct)
-      save_custom_tables(ct)
-      update_custom_table_choices(session)
-      updateSelectInput(session, "dpCustomSaved", choices = c("", names(ct)), selected = nm)
-      showNotification(paste("Saved custom table:", nm), type = "message")
-    }, ignoreInit = TRUE)
-    
-    observeEvent(input$dpDeleteCustom, {
-      nm <- input$dpCustomSaved
-      if (!nzchar(nm)) return()
-      ct <- custom_tables()
-      if (nm %in% names(ct)) {
-        ct[[nm]] <- NULL
-        custom_tables(ct)
-        save_custom_tables(ct)
-        update_custom_table_choices(session)
-        updateSelectInput(session, "dpCustomSaved", choices = c("", names(ct)), selected = "")
-        showNotification(paste("Deleted custom table:", nm), type = "message")
-      }
-    }, ignoreInit = TRUE)
-    
-    # Load saved custom table
-    observeEvent(input$dpCustomSaved, {
-      nm <- input$dpCustomSaved
-      if (!nzchar(nm)) return()
-      ct <- custom_tables()
-      if (nm %in% names(ct)) {
-        saved_cols <- ct[[nm]]$cols
-        if (length(saved_cols)) {
-          updateSelectizeInput(session, "dpCustomCols", selected = saved_cols)
-          updateTextInput(session, "dpCustomName", value = nm)
-        }
-      }
-    }, ignoreInit = TRUE)
   })
 }
 
@@ -12737,7 +12300,6 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
             ns("lbHitCustomCols"), NULL,
             choices = c(
               "PA","AB","AVG","SLG","OBP","OPS","wOBA","xWOBA","ISO","xISO","BABIP",
-              "Velo","IVB","HB","Distance","RV/100","1-1W%","QP%","QP+",
               "Swing%","Whiff%","GB%","K%","BB%","Barrel%","EV","LA",
               "FPS%","Called%","Chase%","GoZoneSw%","IZswing%","EdgeSwing%","PosSD%"
             ),
@@ -12956,51 +12518,12 @@ mod_leader_server <- function(id, is_active = shiny::reactive(TRUE), global_date
           dplyr::across(dplyr::all_of(num_cols), ~ suppressWarnings(as.numeric(.)))
         )
       
-      safe_mean_numeric <- function(x) {
-        x <- suppressWarnings(as.numeric(x))
-        if (!length(x)) return(NA_real_)
-        m <- mean(x, na.rm = TRUE)
-        if (is.finite(m)) m else NA_real_
-      }
-
-      summarise_extra_stats_hitter <- function(data) {
-        data %>%
-          dplyr::summarise(
-            Velo = safe_mean_numeric(RelSpeed),
-            IVB = safe_mean_numeric(InducedVertBreak),
-            HB = safe_mean_numeric(HorzBreak),
-            Distance = safe_mean_numeric(Distance),
-            `1-1W%` = calc_one_one_w_pct(dplyr::cur_data_all()),
-            qp_vals = list(compute_qp_points(dplyr::cur_data_all())),
-            .groups = "drop"
-          ) %>%
-          dplyr::mutate(
-            qp_den = vapply(qp_vals, function(v) sum(!is.na(v)), numeric(1)),
-            qp_hits = vapply(qp_vals, function(v) sum((v * 200) >= 100, na.rm = TRUE), numeric(1)),
-            qp_avg = vapply(qp_vals, function(v) {
-              if (!length(v)) return(NA_real_)
-              m <- mean(v, na.rm = TRUE)
-              if (is.finite(m)) m else NA_real_
-            }, numeric(1)),
-            `QP%` = safe_pct(qp_hits, qp_den),
-            `QP+` = ifelse(is.finite(qp_avg), round(qp_avg * 200, 1), NA_real_)
-          ) %>%
-          dplyr::select(-qp_vals, -qp_den, -qp_hits, -qp_avg)
-      }
-      
-      extra_stats <- df %>%
-        dplyr::group_by(Batter) %>%
-        summarise_extra_stats_hitter() %>%
-        dplyr::rename(Player = Batter)
-      out <- dplyr::left_join(out, extra_stats, by = "Player")
-      
       # EV / LA -> 1 decimal
       out$EV <- ifelse(is.finite(out$EV), round(out$EV, 1), out$EV)
       out$LA <- ifelse(is.finite(out$LA), round(out$LA, 1), out$LA)
       
       # 3-dec rates (no leading 0); percents to 0–100%
-          pct_cols  <- c("Swing%","Whiff%","GB%","K%","BB%","Barrel%",
-                         "FPS%","Called-S%","Take%","Chase%","GoZoneSw%","IZswing%","EdgeSwing%","PosSD%","QP%")
+      pct_cols  <- c("Swing%","Whiff%","GB%","K%","BB%","Barrel%")
       rate_cols <- c("AVG","SLG","OBP","OPS","wOBA","xWOBA","ISO","xISO","BABIP")
       out[pct_cols]  <- lapply(out[pct_cols],  function(z) ifelse(is.finite(z), paste0(round(z*100,1), "%"), ""))
       out[rate_cols] <- lapply(out[rate_cols], fmt_rate3)
@@ -14221,57 +13744,15 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
         "Batter" = if (dom == "Hitter") "Pitcher" else "Batter",
         "Pitch"
       )
-      ensure_split_column <- function(tbl) {
-        if (!is.data.frame(tbl)) return(tbl)
-        if ("SplitColumn" %in% names(tbl)) {
-          val <- as.character(tbl$SplitColumn)
-          if (length(val) == nrow(tbl)) {
-            tbl$SplitColumn <- val
-          } else {
-            tbl$SplitColumn <- rep(NA_character_, nrow(tbl))
-          }
-          return(tbl)
-        }
-        fallback_cols <- c("TaggedPitchType","PitchType","Pitch")
-        fallback <- NULL
-        for (alt in fallback_cols) {
-          if (alt %in% names(tbl)) {
-            fallback <- as.character(tbl[[alt]])
-            break
-          }
-        }
-        if (is.null(fallback) || length(fallback) != nrow(tbl)) {
-          fallback <- rep(NA_character_, nrow(tbl))
-        }
-        tbl$SplitColumn <- fallback
-        tbl
+      pitch_col <- if ("SplitColumn" %in% names(df)) "SplitColumn" else "TaggedPitchType"
+      df$TaggedPitchType <- df[[pitch_col]]
+      df$PitchType <- df$TaggedPitchType
+      if (!"SplitColumn" %in% names(df)) {
+        df$SplitColumn <- df[[pitch_col]]
       }
-      pitch_source <- NULL
-      for (col in c("SplitColumn","TaggedPitchType","PitchType","Pitch")) {
-        if (col %in% names(df)) {
-          pitch_source <- as.character(df[[col]])
-          break
-        }
+      if (!"TaggedPitchType" %in% names(df)) {
+        df$TaggedPitchType <- df$PitchType %||% df$Pitch %||% df$SplitColumn
       }
-      if (is.null(pitch_source)) {
-        pitch_source <- rep(NA_character_, nrow(df))
-      }
-      if ("TaggedPitchType" %in% names(df)) {
-        df$TaggedPitchType <- as.character(df$TaggedPitchType)
-      } else {
-        df$TaggedPitchType <- pitch_source
-      }
-      if ("PitchType" %in% names(df)) {
-        df$PitchType <- as.character(df$PitchType)
-      } else {
-        df$PitchType <- df$TaggedPitchType
-      }
-      if ("SplitColumn" %in% names(df)) {
-        df$SplitColumn <- as.character(df$SplitColumn)
-      } else {
-        df$SplitColumn <- df$TaggedPitchType
-      }
-      df <- ensure_split_column(df)
       
       # Hitting-mode tables (Results + Swing Decisions + Custom)
       if (identical(dom, "Hitter")) {
@@ -14289,116 +13770,6 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           z <- ifelse(is.finite(x), sprintf("%.3f", x), NA_character_)
           sub("^0", "", z)
         }
-        summarize_motion <- function(df_in) {
-          df_in <- ensure_split_column(df_in)
-          if (!nrow(df_in)) return(tibble::tibble(SplitColumn = character(0)))
-          df_in %>%
-            dplyr::group_by(SplitColumn) %>%
-            dplyr::summarise(
-              Velo     = nz_mean_local(RelSpeed),
-              IVB      = nz_mean_local(InducedVertBreak),
-              HB       = nz_mean_local(HorzBreak),
-              Distance = nz_mean_local(Distance),
-              .groups = "drop"
-            )
-        }
-        summarize_swing_metrics <- function(df_in) {
-          df_in <- ensure_split_column(df_in)
-          if (!nrow(df_in)) return(tibble::tibble(SplitColumn = character(0)))
-          inner_half <- 7 / 12
-          mid_x <- (ZONE_LEFT + ZONE_RIGHT) / 2
-          mid_y <- (ZONE_BOTTOM + ZONE_TOP) / 2
-          green_xmin <- mid_x - inner_half
-          green_xmax <- mid_x + inner_half
-          green_ymin <- mid_y - inner_half
-          green_ymax <- mid_y + inner_half
-          df_in <- df_in %>%
-            dplyr::mutate(
-              is_swing = !is.na(PitchCall) & PitchCall %in% c("StrikeSwinging","FoulBall","FoulBallNotFieldable","FoulBallFieldable","InPlay"),
-              in_green = !is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                PlateLocSide >= green_xmin & PlateLocSide <= green_xmax &
-                PlateLocHeight >= green_ymin & PlateLocHeight <= green_ymax,
-              in_zone = !is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                PlateLocSide >= ZONE_LEFT & PlateLocSide <= ZONE_RIGHT &
-                PlateLocHeight >= ZONE_BOTTOM & PlateLocHeight <= ZONE_TOP,
-              possd_point = dplyr::case_when(
-                in_green & is_swing ~ 2,
-                in_green & !is_swing ~ -1,
-                in_zone & !in_green & is_swing ~ 1,
-                in_zone & !in_green & !is_swing ~ 0,
-                !in_zone & is_swing ~ -1,
-                !in_zone & !is_swing ~ 1,
-                TRUE ~ 0
-              )
-            )
-          df_in %>%
-            dplyr::group_by(SplitColumn) %>%
-            dplyr::summarise(
-              total_pitches = dplyr::n(),
-              swings        = sum(is_swing, na.rm = TRUE),
-              fps_num       = sum(!is.na(Balls) & !is.na(Strikes) & Balls == 0 & Strikes == 0 &
-                                   !is.na(PitchCall) & PitchCall %in% c("StrikeSwinging","InPlay","FoulBall","FoulBallNotFieldable","FoulBallFieldable"), na.rm = TRUE),
-              fps_den       = sum(!is.na(Balls) & !is.na(Strikes) & Balls == 0 & Strikes == 0, na.rm = TRUE),
-              called        = sum(!is.na(PitchCall) & PitchCall == "StrikeCalled", na.rm = TRUE),
-              chase_num     = sum(is_swing & !in_zone, na.rm = TRUE),
-              chase_den     = sum(!in_zone, na.rm = TRUE),
-              gozone_sw_num = sum(is_swing & in_green, na.rm = TRUE),
-              gozone_sw_den = sum(in_green, na.rm = TRUE),
-              iz_sw_num     = sum(is_swing & in_zone, na.rm = TRUE),
-              iz_sw_den     = sum(in_zone, na.rm = TRUE),
-              edge_sw_num   = sum(is_swing & in_zone & !in_green, na.rm = TRUE),
-              edge_sw_den   = sum(in_zone & !in_green, na.rm = TRUE),
-              possd_points  = sum(possd_point, na.rm = TRUE),
-              .groups = "drop"
-            ) %>%
-            dplyr::mutate(
-              `FPS%`      = safe_div_local(fps_num, fps_den) * 100,
-              `Called-S%` = safe_div_local(called, total_pitches) * 100,
-              `Take%`     = safe_div_local(total_pitches - swings, total_pitches) * 100,
-              `Chase%`    = safe_div_local(chase_num, chase_den) * 100,
-              `GoZoneSw%` = safe_div_local(gozone_sw_num, gozone_sw_den) * 100,
-              `IZswing%`  = safe_div_local(iz_sw_num, iz_sw_den) * 100,
-              `EdgeSwing%`= safe_div_local(edge_sw_num, edge_sw_den) * 100,
-              `PosSD%`    = safe_div_local(possd_points, total_pitches) * 100,
-              # Raw counts
-              Swings = swings,
-              FPS = fps_num,
-              `Called-S` = called,
-              Takes = total_pitches - swings,
-              Chases = chase_num,
-              GoZoneSw = gozone_sw_num,
-              IZswings = iz_sw_num,
-              EdgeSwings = edge_sw_num,
-              PosSD = possd_points
-            ) %>%
-            dplyr::select(SplitColumn, `FPS%`, `Called-S%`, `Take%`, `Chase%`, `GoZoneSw%`, `IZswing%`, `EdgeSwing%`, `PosSD%`,
-                         Swings, FPS, `Called-S`, Takes, Chases, GoZoneSw, IZswings, EdgeSwings, PosSD)
-        }
-        summarize_qp_metrics <- function(df_in) {
-          df_in <- ensure_split_column(df_in)
-          if (!"QP_pts" %in% names(df_in) || !nrow(df_in)) {
-            return(tibble::tibble(SplitColumn = character(0), `QP%` = numeric(0), `QP+` = numeric(0)))
-          }
-          df_in %>%
-            dplyr::group_by(SplitColumn) %>%
-            dplyr::summarise(
-              `QP%` = safe_div_local(sum(QP_pts * 200 >= 100, na.rm = TRUE), dplyr::n()),
-              `QP+` = safe_div_local(mean(QP_pts, na.rm = TRUE) * 200, 1),
-              .groups = "drop"
-            )
-        }
-        summarize_one_one <- function(df_in) {
-          if (!nrow(df_in)) return(tibble::tibble(SplitColumn = character(0), `1-1W%` = character(0)))
-          df_in %>%
-            dplyr::group_by(SplitColumn) %>%
-            dplyr::group_modify(~ tibble::tibble(`1-1W%` = calc_one_one_w_pct(.x))) %>%
-            dplyr::ungroup()
-        }
-        merge_metrics <- function(dfs) {
-          dfs <- Filter(function(x) nrow(x) > 0, dfs)
-          if (!length(dfs)) return(tibble::tibble(SplitColumn = character(0)))
-          Reduce(function(x, y) dplyr::full_join(x, y, by = "SplitColumn"), dfs)
-        }
         
         build_results_table_hit <- function(df_src) {
           if (!nrow(df_src)) return(data.frame())
@@ -14414,8 +13785,6 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           }
           df_src <- df_src %>%
             dplyr::mutate(SplitColumn = dplyr::coalesce(as.character(SplitColumn), "Unknown"))
-          df_src <- ensure_split_column(df_src)
-          df_src$QP_pts <- compute_qp_points(df_src)
           
           swing_levels <- c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","InPlay")
           is_term <- (
@@ -14455,7 +13824,6 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
               wOBA_den = AB + BBct - IBBct + SFct + HBP,
               wOBA = safe_div_local(wOBA_num, wOBA_den)
             )
-          per_split <- ensure_split_column(per_split)
           
           pitch_totals <- df_src %>%
             dplyr::group_by(SplitColumn) %>%
@@ -14465,14 +13833,12 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
               Whiffs  = sum(PitchCall == "StrikeSwinging", na.rm = TRUE),
               .groups = "drop"
             )
-          pitch_totals <- ensure_split_column(pitch_totals)
           total_pitches <- sum(pitch_totals$Pitches, na.rm = TRUE)
           
           bbe <- df_src %>% dplyr::filter(grepl("live|game|ab", tolower(SessionType)), PitchCall == "InPlay")
           evla <- bbe %>%
             dplyr::group_by(SplitColumn) %>%
             dplyr::summarise(EV = nz_mean_local(ExitSpeed), LA = nz_mean_local(Angle), .groups = "drop")
-          evla <- ensure_split_column(evla)
           gb <- bbe %>%
             dplyr::group_by(SplitColumn) %>%
             dplyr::summarise(
@@ -14480,7 +13846,6 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
                                      sum(!is.na(TaggedHitType),        na.rm = TRUE)),
               .groups = "drop"
             )
-          gb <- ensure_split_column(gb)
           
           parse_pct_prop <- function(x) {
             x_num <- suppressWarnings(as.numeric(sub("%$", "", as.character(x))))
@@ -14491,13 +13856,8 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           extras <- extras_raw %>%
             {
               df_proc <- .
-              # Rename PitchType to SplitColumn if needed
-              if ("PitchType" %in% names(df_proc) && !"SplitColumn" %in% names(df_proc)) {
+              if (!"SplitColumn" %in% names(df_proc) && "PitchType" %in% names(df_proc)) {
                 df_proc <- dplyr::rename(df_proc, SplitColumn = PitchType)
-              }
-              # If neither column exists, create empty SplitColumn
-              if (!"SplitColumn" %in% names(df_proc)) {
-                df_proc$SplitColumn <- character(0)
               }
               df_proc
             } %>%
@@ -14505,11 +13865,9 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
               xWOBA     = suppressWarnings(as.numeric(xWOBA)),
               xISO      = suppressWarnings(as.numeric(xISO)),
               BABIP     = suppressWarnings(as.numeric(BABIP)),
-              `Barrel%` = parse_pct_prop(`Barrel%`),
-              `RV/100`  = suppressWarnings(as.numeric(`RV/100`))
+              `Barrel%` = parse_pct_prop(`Barrel%`)
             ) %>%
-            dplyr::select(SplitColumn, xWOBA, xISO, BABIP, `Barrel%`, `RV/100`)
-          extras <- ensure_split_column(extras)
+            dplyr::select(SplitColumn, xWOBA, xISO, BABIP, `Barrel%`)
           
           res_pt <- per_split %>%
             dplyr::left_join(pitch_totals, by = "SplitColumn") %>%
@@ -14522,7 +13880,6 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
             dplyr::left_join(extras, by = "SplitColumn") %>%
             dplyr::transmute(
               !!split_col_name := as.character(SplitColumn),
-              `#` = Pitches,  # Add pitch count column
               PA, AB, AVG, SLG, OBP, OPS,
               wOBA, xWOBA,
               ISO, xISO, BABIP,
@@ -14530,34 +13887,8 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
               `K%` = safe_div_local(Kct, PA),
               `BB%` = safe_div_local(BBct, PA),
               `Barrel%`,
-              `RV/100`,
-              EV, LA,
-              Whiffs  # Raw count
+              EV, LA
             )
-          
-          # Calculate raw barrel counts per split
-          barrel_counts_hit <- df_src %>%
-            dplyr::filter(
-              !is.na(SessionType),
-              grepl("live|game|ab", tolower(SessionType)),
-              !is.na(PitchCall),
-              PitchCall == "InPlay",
-              is.finite(ExitSpeed),
-              is.finite(Angle),
-              ExitSpeed >= 95,
-              Angle >= 10,
-              Angle <= 35
-            ) %>%
-            dplyr::group_by(SplitColumn) %>%
-            dplyr::summarise(Barrels = dplyr::n(), .groups = "drop")
-          barrel_counts_hit <- ensure_split_column(barrel_counts_hit)
-          
-          # Rename SplitColumn to match the split_col_name
-          names(barrel_counts_hit)[names(barrel_counts_hit) == "SplitColumn"] <- split_col_name
-          
-          # Join barrels
-          res_pt <- res_pt %>%
-            dplyr::left_join(barrel_counts_hit, by = split_col_name)
           
           # All-row
           PAt <- nrow(term)
@@ -14583,16 +13914,8 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
           }
           bbe_all <- df_src %>% dplyr::filter(grepl("live|game|ab", tolower(SessionType)), PitchCall == "InPlay")
           
-          # Calculate barrels for all row
-          barrels_all <- sum(
-            !is.na(bbe_all$ExitSpeed) & !is.na(bbe_all$Angle) &
-            bbe_all$ExitSpeed >= 95 & bbe_all$Angle >= 10 & bbe_all$Angle <= 35,
-            na.rm = TRUE
-          )
-          
           all_row <- tibble::tibble(
             !!split_col_name := "All",
-            `#` = total_pitches,  # Add total pitch count
             PA = PAt,
             AB = ABt,
             AVG = safe_div_local(H, ABt),
@@ -14608,17 +13931,13 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
             `Barrel%`= NA_real_,
             EV = nz_mean_local(bbe_all$ExitSpeed),
             LA = nz_mean_local(bbe_all$Angle),
-            `RV/100` = NA_real_,  # Will be filled below
             ISO = SLG - AVG,
             wOBA = {
               uBB_all <- BBc_all - IBB_all
               num <- 0.690*uBB_all + 0.722*HBP_all + 0.888*H1 + 1.271*H2 + 1.616*H3 + 2.101*HR
               den <- ABt + BBc_all - IBB_all + Sac_all + HBP_all
               safe_div_local(num, den)
-            },
-            Swings = swings,
-            Whiffs = whiffs,
-            Barrels = barrels_all
+            }
           ) %>%
             dplyr::mutate(OPS = SLG + OBP)
           
@@ -14638,7 +13957,6 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
                 xISO  = nz_mean_local(xISO),
                 BABIP = nz_mean_local(BABIP),
                 `Barrel%` = nz_mean_local(`Barrel%`),
-                `RV/100` = nz_mean_local(suppressWarnings(as.numeric(`RV/100`))),
                 .groups = "drop"
               )
           }
@@ -14647,51 +13965,9 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
             all_row$xISO      <- extras_all$xISO[1]
             all_row$BABIP     <- extras_all$BABIP[1]
             all_row$`Barrel%` <- extras_all$`Barrel%`[1]
-            all_row$`RV/100`  <- extras_all$`RV/100`[1]
           }
           
           res <- dplyr::bind_rows(res_pt, all_row)
-          required_raw_cols <- c("Swings","FPS","Called-S","Takes","Chases",
-                                 "GoZoneSw","IZswings","EdgeSwings","PosSD",
-                                 "Whiffs","Barrels")
-          missing_raw <- setdiff(required_raw_cols, names(res))
-          if (length(missing_raw)) {
-            res[missing_raw] <- NA_real_
-          }
-          metrics_base <- merge_metrics(list(
-            summarize_motion(df_src),
-            summarize_swing_metrics(df_src),
-            summarize_qp_metrics(df_src),
-            summarize_one_one(df_src)
-          ))
-          df_all <- df_src %>% dplyr::mutate(SplitColumn = "All")
-          metrics_all <- merge_metrics(list(
-            summarize_motion(df_all),
-            summarize_swing_metrics(df_all),
-            summarize_qp_metrics(df_all),
-            summarize_one_one(df_all)
-          ))
-          metrics_df <- dplyr::bind_rows(metrics_base, metrics_all)
-          if (nrow(metrics_df)) {
-            metrics_df <- metrics_df %>%
-              dplyr::mutate(!!split_col_name := SplitColumn) %>%
-              dplyr::select(-SplitColumn)
-            res <- dplyr::left_join(res, metrics_df, by = split_col_name)
-            for (col in required_raw_cols) {
-              col_x <- paste0(col, ".x")
-              col_y <- paste0(col, ".y")
-              if (!(col %in% names(res))) res[[col]] <- NA_real_
-              val <- res[[col]]
-              if (col_x %in% names(res)) {
-                val <- dplyr::coalesce(val, res[[col_x]])
-              }
-              if (col_y %in% names(res)) {
-                val <- dplyr::coalesce(val, res[[col_y]])
-              }
-              res[[col]] <- val
-            }
-            res <- res[, !grepl("\\.(x|y)$", names(res))]
-          }
           if (identical(split_choice, "Pitch Types") && split_col_name == "Pitch") {
             ord <- names(all_colors)
             res[[split_col_name]] <- factor(res[[split_col_name]], levels = c(ord, setdiff(res[[split_col_name]], ord)))
@@ -14837,84 +14113,30 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
             options = list(dom = 't'), rownames = FALSE
           ))
         }
-        
-        # Format columns properly
-        # Percentage columns that are 0-1 scale (need *100)
-        pct_cols_01 <- c("Swing%", "Whiff%", "GB%", "K%", "BB%", "Barrel%")
-        for (col in pct_cols_01) {
-          if (col %in% names(results_df)) {
-            v <- suppressWarnings(as.numeric(results_df[[col]]))
-            results_df[[col]] <- ifelse(is.finite(v), paste0(round(v * 100, 1), "%"), "")
+        num_cols <- c("PA","AB","AVG","SLG","OBP","OPS","wOBA","xWOBA","ISO","xISO","BABIP",
+                      "Swing%","Whiff%","GB%","K%","BB%","Barrel%","EV","LA")
+        results_df <- results_df %>%
+          dplyr::mutate(dplyr::across(dplyr::all_of(num_cols), ~ suppressWarnings(as.numeric(.)))) %>%
+          {
+            df_tmp <- .
+            pct_cols  <- c("Swing%","Whiff%","GB%","K%","BB%","Barrel%")
+            rate_cols <- c("AVG","SLG","OBP","OPS","wOBA","xWOBA","ISO","xISO","BABIP")
+            for (nm in pct_cols) if (nm %in% names(df_tmp)) df_tmp[[nm]] <- ifelse(is.finite(df_tmp[[nm]]), paste0(round(df_tmp[[nm]]*100,1), "%"), "")
+            for (nm in rate_cols) if (nm %in% names(df_tmp)) df_tmp[[nm]] <- ifelse(is.finite(df_tmp[[nm]]), fmt_avg_local(df_tmp[[nm]]), "")
+            if ("EV" %in% names(df_tmp)) df_tmp$EV <- ifelse(is.finite(df_tmp$EV), round(df_tmp$EV,1), "")
+            if ("LA" %in% names(df_tmp)) df_tmp$LA <- ifelse(is.finite(df_tmp$LA), round(df_tmp$LA,1), "")
+            df_tmp
           }
-        }
         
-        # Percentage columns that are already 0-100 scale (no *100 needed)
-        pct_cols_100 <- c("FPS%", "Called-S%", "Take%", "Chase%", "GoZoneSw%", "IZswing%", "EdgeSwing%", "PosSD%", "QP%")
-        for (col in pct_cols_100) {
-          if (col %in% names(results_df)) {
-            v <- suppressWarnings(as.numeric(results_df[[col]]))
-            results_df[[col]] <- ifelse(is.finite(v), paste0(round(v, 1), "%"), "")
-          }
-        }
-        
-        # Note: 1-1W% is already formatted as a string by calc_one_one_w_pct, so skip it
-        
-        # Rate columns (AVG, SLG, OBP, etc.) - format as .XXX
-        rate_cols <- c("AVG", "SLG", "OBP", "OPS", "wOBA", "xWOBA", "ISO", "xISO", "BABIP")
-        for (col in rate_cols) {
-          if (col %in% names(results_df)) {
-            v <- suppressWarnings(as.numeric(results_df[[col]]))
-            results_df[[col]] <- ifelse(is.finite(v), sub("^0", "", sprintf("%.3f", v)), "")
-          }
-        }
-        
-        # Decimal columns (round to 1 decimal)
-        decimal_cols <- c("Velo", "IVB", "HB", "Distance", "RV/100", "EV", "LA", "QP+")
-        for (col in decimal_cols) {
-          if (col %in% names(results_df)) {
-            v <- suppressWarnings(as.numeric(results_df[[col]]))
-            results_df[[col]] <- ifelse(is.finite(v), as.character(round(v, 1)), "")
-          }
-        }
-        
-        # Integer count columns (display as whole numbers)
-        count_cols_hitting <- c("Takes", "Called-S", "Whiffs", "Chases", "IZswings", "Barrels", "FPS", "EdgeSwings", "PosSD", "GoZoneSw")
-        for (col in count_cols_hitting) {
-          if (col %in% names(results_df)) {
-            v <- suppressWarnings(as.numeric(results_df[[col]]))
-            results_df[[col]] <- ifelse(is.finite(v), as.character(round(v)), "")
-          }
-        }
-        
-        # Define default visible columns for Results mode
+        visible_cols_base <- c(split_col_name, "PA", "AB", "AVG", "SLG", "OBP", "OPS", "xWOBA", "xISO", "BABIP",
+                               "wOBA", "ISO",
+                               "Swing%", "Whiff%", "GB%", "K%", "BB%", "Barrel%", "EV", "LA")
         if (identical(mode, "Custom")) {
-          # Custom mode: user-selected columns
-          visible_cols_base <- c(
-            split_col_name,
-            "Velo", "IVB", "HB", "Distance", "RV/100",
-            "#", "Usage", "BF", "IP", "FIP", "WHIP",
-            "PA", "AB", "AVG", "SLG", "OBP", "OPS",
-            "wOBA", "xWOBA", "ISO", "xISO", "BABIP",
-            "1-1W%", "QP%", "QP+",
-            "Swing%", "Whiff%", "CSW%", "GB%", "K%", "BB%", "Barrel%",
-            "FPS%", "Called-S%", "Take%", "Chase%", "GoZoneSw%", "IZswing%", "EdgeSwing%", "PosSD%",
-            "EV", "LA",
-            # Raw count columns
-            "Takes", "Called-S", "Whiffs", "Chases", "IZswings", "Barrels", "FPS", "EdgeSwings", "PosSD", "GoZoneSw"
-          )
-          # Only include custom columns that exist in both visible_cols_base AND results_df
-          valid_custom_cols <- intersect(custom_cols, intersect(visible_cols_base, names(results_df)))
-          visible_cols <- unique(c(split_col_name, valid_custom_cols))
+          custom_cols <- custom_cols[custom_cols %in% visible_cols_base]
+          visible_cols <- unique(c(split_col_name, custom_cols))
           if (length(visible_cols) == 1) visible_cols <- visible_cols_base
         } else {
-          # Results mode: show key hitting stats by default
-          visible_cols <- c(
-            split_col_name,
-            "PA", "AB", "AVG", "SLG", "OBP", "OPS",
-            "wOBA", "xWOBA", "ISO", "xISO", "BABIP",
-            "Swing%", "Whiff%", "GB%", "K%", "BB%", "Barrel%",
-            "EV", "LA"
-          )
+          visible_cols <- visible_cols_base
         }
         
         return(datatable_with_colvis(
@@ -14989,7 +14211,6 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
             OBP = safe_div(H + BBct + HBP, PA),
             OPS = SLG + OBP
           )
-        per_type <- ensure_split_column(per_type)
         
         pitch_totals <- df %>%
           dplyr::group_by(SplitColumn) %>%
@@ -15000,7 +14221,6 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
             CalledStrikes = sum(PitchCall == "StrikeCalled",    na.rm = TRUE),
             .groups = "drop"
           )
-        pitch_totals <- ensure_split_column(pitch_totals)
         total_pitches <- sum(pitch_totals$Pitches, na.rm = TRUE)
         
         scores <- ifelse(
@@ -15021,13 +14241,11 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
             .groups = "drop"
           ) %>%
           dplyr::mutate(PitchingP = round((StuffP + CommandP)/2, 1))
-        sc_by_type <- ensure_split_column(sc_by_type)
         
         bbe <- df %>% dplyr::filter(grepl("live|game|ab", tolower(SessionType)), PitchCall == "InPlay")
         evla <- bbe %>%
           dplyr::group_by(SplitColumn) %>%
           dplyr::summarise(EV = nz_mean(ExitSpeed), LA = nz_mean(Angle), .groups = "drop")
-        evla <- ensure_split_column(evla)
         gb <- bbe %>%
           dplyr::group_by(SplitColumn) %>%
           dplyr::summarise(
@@ -15035,7 +14253,6 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
                              sum(!is.na(TaggedHitType),        na.rm = TRUE)),
             .groups = "drop"
           )
-        gb <- ensure_split_column(gb)
         
         extras <- compute_process_results(df) %>%
           dplyr::rename(Pitch = PitchType) %>%
@@ -15046,7 +14263,6 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
             `Barrel%` = parse_num(`Barrel%`)
           ) %>%
           dplyr::select(Pitch, xWOBA, xISO, BABIP, `Barrel%`, `RV/100`)
-        extras <- ensure_split_column(extras)
         
         res_pt <- per_type %>%
           dplyr::left_join(pitch_totals, by = "SplitColumn") %>%
@@ -15187,16 +14403,10 @@ mod_comp_server <- function(id, is_active = shiny::reactive(TRUE), global_date_r
         
         visible_set <- visible_set_for(mode, custom_cols)
         if (identical(mode, "Custom")) {
-          # Only include custom columns that actually exist in the dataframe
-          valid_custom_cols <- intersect(custom_cols, names(df_dt))
-          order_cols <- unique(c(split_col_name, valid_custom_cols))
-          # Only reorder if we have valid custom columns
-          if (length(valid_custom_cols) > 0) {
-            extras <- setdiff(names(df_dt), order_cols)
-            df_dt <- df_dt[, c(order_cols, extras), drop = FALSE]
-          }
+          order_cols <- unique(c("Pitch", custom_cols))
+          extras <- setdiff(names(df_dt), order_cols)
+          df_dt <- df_dt[, c(order_cols, extras), drop = FALSE]
         }
-        df_dt <- format_decimal_columns(df_dt)
         return(datatable_with_colvis(
           df_dt,
           lock            = split_col_name,
@@ -15882,7 +15092,6 @@ custom_reports_ui <- function(id) {
                    h4("Report Setup"),
                    textInput(ns("report_title"), "Report Title", ""),
                    selectInput(ns("report_type"), "Report Type:", choices = c("Pitching","Hitting"), selected = "Pitching"),
-                   selectInput(ns("report_team"), "Team:", choices = TEAM_CHOICES, selected = "All"),
                    selectInput(ns("report_scope"), "Scope:", choices = c("Single Player","Multi-Player"), selected = "Single Player"),
                    # Single Player mode - show player selector
                    conditionalPanel(
@@ -15913,9 +15122,7 @@ custom_reports_ui <- function(id) {
         ),
         column(9, id = ns("main_column"),
                uiOutput(ns("report_header")),
-               div(id = ns("report_canvas_wrapper"),
-                   uiOutput(ns("report_canvas"))
-               )
+               uiOutput(ns("report_canvas"))
         )
       )
     )
@@ -15931,35 +15138,6 @@ custom_reports_server <- function(id) {
       val <- try(is_admin_fun(), silent = TRUE)
       if (inherits(val, "try-error")) FALSE else isTRUE(val)
     })
-    
-    get_team_filtered_players <- function(report_type, team_type) {
-      team_type <- team_type %||% "All"
-      switch(report_type,
-        "Pitching" = {
-          pool <- unique(stats::na.omit(c(pitch_data_pitching$Pitcher, pitch_data$Pitcher)))
-          pool <- pool[nzchar(pool)]
-          if (team_type == "Campers") {
-            sort(intersect(ALLOWED_CAMPERS, pool))
-          } else if (team_type == TEAM_CODE) {
-            sort(intersect(ALLOWED_PITCHERS, pool))
-          } else {
-            sort(pool)
-          }
-        },
-        "Hitting" = {
-          pool <- unique(stats::na.omit(c(pitch_data$Batter, pitch_data_pitching$Batter)))
-          pool <- pool[nzchar(pool)]
-          if (team_type == "Campers") {
-            sort(intersect(ALLOWED_CAMPERS, pool))
-          } else if (team_type == TEAM_CODE) {
-            sort(intersect(ALLOWED_HITTERS, pool))
-          } else {
-            sort(pool)
-          }
-        },
-        character(0)
-      )
-    }
     
     output$report_global_toggle <- renderUI({
       if (!isTRUE(is_admin_local())) return(NULL)
@@ -15999,35 +15177,35 @@ custom_reports_server <- function(id) {
     })
     
     # Populate players based on type (for Single Player mode)
-    observe({
-      req(input$report_type, input$report_team)
-      players <- get_team_filtered_players(input$report_type, input$report_team)
+    observeEvent(input$report_type, {
+      if (input$report_type == "Pitching") {
+        players <- sort(unique(stats::na.omit(c(pitch_data_pitching$Pitcher, pitch_data$Pitcher))))
+      } else {
+        # For hitting, get batters from pitch_data
+        batters <- unique(stats::na.omit(as.character(pitch_data$Batter)))
+        batters <- batters[nzchar(batters)]  # Remove empty strings
+        players <- sort(batters)
+      }
       
-      player_choices <- c("All" = "All", setNames(players, players))
-      # Update the main player selector (Single Player mode)
+      # Update the main player selector (Single Player mode) - add "All" option
       updateSelectizeInput(session, "report_players",
-                           choices = player_choices,
-                           selected = "All",
+                           choices = c("All", players),
+                           selected = "All",  # Default to All
                            server = TRUE)
       
-      # Update all row player selectors (Multi-Player mode) with filtered players
+      # Update all row player selectors (Multi-Player mode) - add "All" option
       for (r in 1:15) {
         selector_id <- paste0("row_player_", r)
         updateSelectizeInput(session, selector_id,
                              choices = c("", "All", players),
                              server = TRUE)
       }
-    })
+    }, ignoreInit = FALSE)
     
     # Load saved report
     observeEvent(input$saved_report, {
       nm <- input$saved_report
       if (!nzchar(nm)) return()
-      load_cycle <- start_loading_cycle()
-      if (!is.null(loading_report_handle)) {
-        later::cancel(loading_report_handle)
-        loading_report_handle <<- NULL
-      }
       cr <- custom_reports_store()
       if (!nm %in% names(cr)) return()
       rep <- cr[[nm]]
@@ -16040,157 +15218,106 @@ custom_reports_server <- function(id) {
       
       # FIRST: Update current_cells with saved data (before UI changes)
       update_reports_grid(rep$cells %||% list())
-      new_report_token(as.numeric(Sys.time()))
-      
-      # Also populate cell_titles from the loaded report
-      titles <- list()
-      for (cell_id in names(rep$cells)) {
-        if (!is.null(rep$cells[[cell_id]]$title)) {
-          titles[[cell_id]] <- rep$cells[[cell_id]]$title
-        }
-      }
-      cell_titles(titles)
       
       # THEN: Update all UI elements (this will trigger renderUI which reads from current_cells)
       updateTextInput(session, "report_title", value = rep$title %||% "")
-      updateSelectInput(session, "report_team", selected = rep$team %||% "All")
       updateSelectInput(session, "report_type", selected = rep$type %||% "Pitching")
       updateSelectInput(session, "report_scope", selected = rep$scope %||% "Single Player")
       updateSelectizeInput(session, "report_players", selected = rep$players %||% character(0))
       updateSelectInput(session, "report_rows", selected = rep$rows %||% 1)
       updateSelectInput(session, "report_cols", selected = rep$cols %||% 1)
       
-      rows <- rep$rows %||% 1
-      cols <- rep$cols %||% 1
-      scope <- rep$scope %||% "Single Player"
-      cells <- rep$cells %||% list()
-
-      update_saved_state <- function() {
+      # After a delay, explicitly update filter inputs and player selectors
+      # This ensures they get the saved values even if the UI already exists
+      later::later(function() {
+        cells <- rep$cells %||% list()
+        rows <- rep$rows %||% 1
+        cols <- rep$cols %||% 1
+        scope <- rep$scope %||% "Single Player"
+        
+        # FIRST: Always show controls when loading a report
+        # This ensures filter controls are visible so we can update them
         for (r in seq_len(rows)) {
           for (c in seq_len(cols)) {
             cell_id <- paste0("r", r, "c", c)
-            saved_cell <- cells[[cell_id]]
-            if (is.null(saved_cell)) next
+            updateCheckboxInput(session, paste0("cell_show_controls_", cell_id), value = TRUE)
           }
         }
-        # Update row player inputs (Multi-Player)
-        if (scope == "Multi-Player") {
+        
+        # THEN: Wait a bit for controls to render, then update filter values
+        later::later(function() {
+          # Update row player inputs in Multi-Player mode
+          if (scope == "Multi-Player") {
+            for (r in seq_len(rows)) {
+              player_val <- cells[[paste0("row_", r, "_player")]]
+              if (!is.null(player_val) && length(player_val) == 1 && !is.na(player_val) && player_val != "") {
+                updateSelectizeInput(session, paste0("row_player_", r), selected = player_val)
+              }
+            }
+          }
+          
+          # Update filter inputs for each cell
           for (r in seq_len(rows)) {
-            player_val <- cells[[paste0("row_", r, "_player")]]
-            if (!is.null(player_val) && length(player_val) == 1 && !is.na(player_val) && player_val != "") {
-              updateSelectizeInput(session, paste0("row_player_", r), selected = player_val)
+            for (c in seq_len(cols)) {
+              cell_id <- paste0("r", r, "c", c)
+              saved_cell <- cells[[cell_id]]
+              if (!is.null(saved_cell)) {
+                # Update filter inputs if they have saved values
+                if (!is.null(saved_cell$dates) && length(saved_cell$dates) == 2) {
+                  updateDateRangeInput(session, paste0("cell_dates_", cell_id), 
+                                       start = saved_cell$dates[1], end = saved_cell$dates[2])
+                }
+                if (!is.null(saved_cell$session) && length(saved_cell$session) == 1 && !is.na(saved_cell$session) && saved_cell$session != "") {
+                  updateSelectInput(session, paste0("cell_session_", cell_id), selected = saved_cell$session)
+                }
+                if (!is.null(saved_cell$pitch_types) && length(saved_cell$pitch_types) > 0) {
+                  updateSelectizeInput(session, paste0("cell_pitch_types_", cell_id), selected = saved_cell$pitch_types)
+                }
+                if (!is.null(saved_cell$batter_side) && length(saved_cell$batter_side) == 1 && !is.na(saved_cell$batter_side) && saved_cell$batter_side != "") {
+                  updateSelectInput(session, paste0("cell_batter_side_", cell_id), selected = saved_cell$batter_side)
+                }
+                if (!is.null(saved_cell$pitcher_hand) && length(saved_cell$pitcher_hand) == 1 && !is.na(saved_cell$pitcher_hand) && saved_cell$pitcher_hand != "") {
+                  updateSelectInput(session, paste0("cell_pitcher_hand_", cell_id), selected = saved_cell$pitcher_hand)
+                }
+                if (!is.null(saved_cell$results) && length(saved_cell$results) > 0) {
+                  updateSelectInput(session, paste0("cell_results_", cell_id), selected = saved_cell$results)
+                }
+                if (!is.null(saved_cell$qp) && length(saved_cell$qp) == 1 && !is.na(saved_cell$qp) && saved_cell$qp != "") {
+                  updateSelectInput(session, paste0("cell_qp_", cell_id), selected = saved_cell$qp)
+                }
+                if (!is.null(saved_cell$count) && length(saved_cell$count) > 0) {
+                  updateSelectInput(session, paste0("cell_count_", cell_id), selected = saved_cell$count)
+                }
+                if (!is.null(saved_cell$after_count) && length(saved_cell$after_count) > 0) {
+                  updateSelectInput(session, paste0("cell_after_count_", cell_id), selected = saved_cell$after_count)
+                }
+                if (!is.null(saved_cell$zone) && length(saved_cell$zone) > 0) {
+                  updateSelectInput(session, paste0("cell_zone_", cell_id), selected = saved_cell$zone)
+                }
+                if (!is.null(saved_cell$velo_min) && length(saved_cell$velo_min) == 1 && !is.na(saved_cell$velo_min)) {
+                  updateNumericInput(session, paste0("cell_velo_min_", cell_id), value = saved_cell$velo_min)
+                }
+                if (!is.null(saved_cell$velo_max) && length(saved_cell$velo_max) == 1 && !is.na(saved_cell$velo_max)) {
+                  updateNumericInput(session, paste0("cell_velo_max_", cell_id), value = saved_cell$velo_max)
+                }
+                if (!is.null(saved_cell$ivb_min) && length(saved_cell$ivb_min) == 1 && !is.na(saved_cell$ivb_min)) {
+                  updateNumericInput(session, paste0("cell_ivb_min_", cell_id), value = saved_cell$ivb_min)
+                }
+                if (!is.null(saved_cell$ivb_max) && length(saved_cell$ivb_max) == 1 && !is.na(saved_cell$ivb_max)) {
+                  updateNumericInput(session, paste0("cell_ivb_max_", cell_id), value = saved_cell$ivb_max)
+                }
+                if (!is.null(saved_cell$hb_min) && length(saved_cell$hb_min) == 1 && !is.na(saved_cell$hb_min)) {
+                  updateNumericInput(session, paste0("cell_hb_min_", cell_id), value = saved_cell$hb_min)
+                }
+                if (!is.null(saved_cell$hb_max) && length(saved_cell$hb_max) == 1 && !is.na(saved_cell$hb_max)) {
+                  updateNumericInput(session, paste0("cell_hb_max_", cell_id), value = saved_cell$hb_max)
+                }
+              }
             }
-          }
-        }
-        for (r in seq_len(rows)) {
-          for (c in seq_len(cols)) {
-            cell_id <- paste0("r", r, "c", c)
-            saved_cell <- cells[[cell_id]]
-            if (is.null(saved_cell)) next
-            if (!is.null(saved_cell$type)) {
-              updateSelectInput(session, paste0("cell_type_", cell_id), selected = saved_cell$type)
-            }
-            if (!is.null(saved_cell$filter)) {
-              updateSelectInput(session, paste0("cell_filter_", cell_id), selected = saved_cell$filter)
-            }
-            if (!is.null(saved_cell$table_mode)) {
-              updateSelectInput(session, paste0("cell_table_mode_", cell_id), selected = saved_cell$table_mode)
-            }
-            if (!is.null(saved_cell$table_custom_cols)) {
-              updateSelectizeInput(session, paste0("cell_table_custom_cols_", cell_id), selected = saved_cell$table_custom_cols)
-            }
-            if (!is.null(saved_cell$color)) {
-              updateCheckboxInput(session, paste0("cell_color_", cell_id), value = isTRUE(saved_cell$color))
-            }
-            if (!is.null(saved_cell$heat_stat)) {
-              updateSelectInput(session, paste0("cell_heat_stat_", cell_id), selected = saved_cell$heat_stat)
-            }
-            if (!is.null(saved_cell$filter_select)) {
-              updateSelectizeInput(session, paste0("cell_filter_select_", cell_id), selected = saved_cell$filter_select)
-            }
-            if (!is.null(saved_cell$span) && length(saved_cell$span) == 1 && !is.na(saved_cell$span)) {
-              updateNumericInput(session, paste0("cell_span_", cell_id), value = saved_cell$span)
-            }
-            if (!is.null(saved_cell$dates) && length(saved_cell$dates) == 2) {
-              updateDateRangeInput(session, paste0("cell_dates_", cell_id), 
-                                   start = saved_cell$dates[1], end = saved_cell$dates[2])
-            }
-            if (!is.null(saved_cell$session) && length(saved_cell$session) == 1 && !is.na(saved_cell$session) && saved_cell$session != "") {
-              updateSelectInput(session, paste0("cell_session_", cell_id), selected = saved_cell$session)
-            }
-            if (!is.null(saved_cell$pitch_types) && length(saved_cell$pitch_types) > 0) {
-              updateSelectizeInput(session, paste0("cell_pitch_types_", cell_id), selected = saved_cell$pitch_types)
-            }
-            if (!is.null(saved_cell$batter_side) && length(saved_cell$batter_side) == 1 && !is.na(saved_cell$batter_side) && saved_cell$batter_side != "") {
-              updateSelectInput(session, paste0("cell_batter_side_", cell_id), selected = saved_cell$batter_side)
-            }
-            if (!is.null(saved_cell$pitcher_hand) && length(saved_cell$pitcher_hand) == 1 && !is.na(saved_cell$pitcher_hand) && saved_cell$pitcher_hand != "") {
-              updateSelectInput(session, paste0("cell_pitcher_hand_", cell_id), selected = saved_cell$pitcher_hand)
-            }
-            if (!is.null(saved_cell$results) && length(saved_cell$results) > 0) {
-              updateSelectInput(session, paste0("cell_results_", cell_id), selected = saved_cell$results)
-            }
-            if (!is.null(saved_cell$qp) && length(saved_cell$qp) == 1 && !is.na(saved_cell$qp) && saved_cell$qp != "") {
-              updateSelectInput(session, paste0("cell_qp_", cell_id), selected = saved_cell$qp)
-            }
-            if (!is.null(saved_cell$count) && length(saved_cell$count) > 0) {
-              updateSelectInput(session, paste0("cell_count_", cell_id), selected = saved_cell$count)
-            }
-            if (!is.null(saved_cell$after_count) && length(saved_cell$after_count) > 0) {
-              updateSelectInput(session, paste0("cell_after_count_", cell_id), selected = saved_cell$after_count)
-            }
-            if (!is.null(saved_cell$zone) && length(saved_cell$zone) > 0) {
-              updateSelectInput(session, paste0("cell_zone_", cell_id), selected = saved_cell$zone)
-            }
-            if (!is.null(saved_cell$velo_min) && length(saved_cell$velo_min) == 1 && !is.na(saved_cell$velo_min)) {
-              updateNumericInput(session, paste0("cell_velo_min_", cell_id), value = saved_cell$velo_min)
-            }
-            if (!is.null(saved_cell$velo_max) && length(saved_cell$velo_max) == 1 && !is.na(saved_cell$velo_max)) {
-              updateNumericInput(session, paste0("cell_velo_max_", cell_id), value = saved_cell$velo_max)
-            }
-            if (!is.null(saved_cell$ivb_min) && length(saved_cell$ivb_min) == 1 && !is.na(saved_cell$ivb_min)) {
-              updateNumericInput(session, paste0("cell_ivb_min_", cell_id), value = saved_cell$ivb_min)
-            }
-            if (!is.null(saved_cell$ivb_max) && length(saved_cell$ivb_max) == 1 && !is.na(saved_cell$ivb_max)) {
-              updateNumericInput(session, paste0("cell_ivb_max_", cell_id), value = saved_cell$ivb_max)
-            }
-            if (!is.null(saved_cell$hb_min) && length(saved_cell$hb_min) == 1 && !is.na(saved_cell$hb_min)) {
-              updateNumericInput(session, paste0("cell_hb_min_", cell_id), value = saved_cell$hb_min)
-            }
-            if (!is.null(saved_cell$hb_max) && length(saved_cell$hb_max) == 1 && !is.na(saved_cell$hb_max)) {
-              updateNumericInput(session, paste0("cell_hb_max_", cell_id), value = saved_cell$hb_max)
-            }
-          }
-        }
-      }
-
-      session$onFlushed(function() {
-        if (loading_report_cycle != load_cycle) return()
-        # Restore controls visibility from saved report (default to TRUE)
-        for (r in seq_len(rows)) {
-          for (c in seq_len(cols)) {
-            cell_id <- paste0("r", r, "c", c)
-            saved_cell <- cells[[cell_id]] %||% list()
-            show_val <- saved_cell$show_controls
-            if (is.null(show_val)) show_val <- TRUE
-            updateCheckboxInput(session, paste0("cell_show_controls_", cell_id), value = show_val)
-          }
-        }
-
-        update_saved_state()
-
-        # Cancel any pending release from previous load before scheduling this one
-        if (!is.null(loading_report_handle)) {
-          later::cancel(loading_report_handle)
-          loading_report_handle <<- NULL
-        }
-        loading_report_handle <<- later::later(function() {
-          if (loading_report_cycle != load_cycle) return()
-          update_saved_state()
+          }          # Clear the loading flag after all updates are done
           loading_report(FALSE)
-          loading_report_handle <<- NULL
-        }, delay = 0.5)
-      }, once = TRUE)
+        }, delay = 0.5)  # 0.5 second delay for controls to render
+      }, delay = 1.5)  # 1.5 second initial delay
     }, ignoreInit = TRUE)
     
     # Render player selectors in sidebar for Multi-Player mode
@@ -16199,7 +15326,11 @@ custom_reports_server <- function(id) {
       rows <- as.integer(input$report_rows)
       if (is.na(rows) || rows < 1) return(NULL)
       
-      players <- get_team_filtered_players(input$report_type, input$report_team)
+      players <- if (input$report_type == "Pitching") {
+        sort(unique(stats::na.omit(c(pitch_data_pitching$Pitcher, pitch_data$Pitcher))))
+      } else {
+        sort(unique(stats::na.omit(c(pitch_data$Batter, pitch_data_pitching$Batter))))
+      }
       
       cells <- current_cells()
       
@@ -16262,23 +15393,11 @@ custom_reports_server <- function(id) {
         showNotification("Please enter a report title.", type = "warning")
         return()
       }
-      
-      # First, ensure all titles are synced from cell_titles to current_cells
-      titles <- isolate(cell_titles())
       cells <- isolate(current_cells())
-      for (cell_id in names(titles)) {
-        if (!is.null(cells[[cell_id]])) {
-          cells[[cell_id]]$title <- titles[[cell_id]]
-        } else {
-          cells[[cell_id]] <- list(title = titles[[cell_id]])
-        }
-      }
-      
       scope <- if (isTRUE(is_admin_local()) && isTRUE(input$report_global)) GLOBAL_SCOPE else current_school()
       rep <- list(
         title = nm,
         type = input$report_type,
-        team = input$report_team %||% "All",
         scope = input$report_scope,
         players = input$report_players,
         rows = as.integer(input$report_rows),
@@ -16306,39 +15425,27 @@ custom_reports_server <- function(id) {
       }
     }, ignoreInit = TRUE)
     
-    # New Report - keep existing layout but clear title so a new save can be created
+    # New Report - clear everything for fresh start
     observeEvent(input$new_report, {
-      new_cycle <- start_loading_cycle()
-      if (!is.null(loading_report_handle)) {
-        later::cancel(loading_report_handle)
-        loading_report_handle <<- NULL
-      }
-      loading_report(TRUE)
+      # Clear all cells
+      current_cells(list())
+      
+      # Reset to defaults
       updateTextInput(session, "report_title", value = "")
+      updateSelectInput(session, "report_type", selected = "Pitching")
+      updateSelectInput(session, "report_scope", selected = "Single Player")
+      updateSelectizeInput(session, "report_players", selected = character(0))
+      updateSelectInput(session, "report_rows", selected = 1)
+      updateSelectInput(session, "report_cols", selected = 1)
       updateSelectInput(session, "saved_report", selected = "")
       if (isTRUE(is_admin_local())) updateCheckboxInput(session, "report_global", value = FALSE)
-
-      loading_report_handle <<- later::later(function() {
-        if (loading_report_cycle != new_cycle) return()
-        loading_report(FALSE)
-        loading_report_handle <<- NULL
-      }, delay = 0.2)
-
-      showNotification("New report ready for editing (current layout is preserved). Save to keep it.", type = "message")
+      
+      showNotification("New report created. Start building!", type = "message")
     }, ignoreInit = TRUE)
     
     # Grid state
     current_cells <- reactiveVal(list())
-    cell_titles <- reactiveVal(list())  # Separate storage for titles to avoid UI re-renders
-    loading_report <- reactiveVal(FALSE)  # Flag to prevent observe block from overwriting during load
-    loading_report_cycle <- 0  # Tracks active loading cycle
-    loading_report_handle <- NULL
-    new_report_token <- reactiveVal(0)
-
-    start_loading_cycle <- function() {
-      loading_report_cycle <<- loading_report_cycle + 1
-      loading_report_cycle
-    }
+    loading_report <- reactiveVal(FALSE)  # Flag to prevent observe from overwriting during load
     update_reports_grid <- function(cells_list) {
       current_cells(cells_list)
     }
@@ -16524,27 +15631,12 @@ custom_reports_server <- function(id) {
       }
     }, ignoreInit = FALSE)
     
-    compute_column_widths <- function(cols, base_width) {
-      cols <- as.integer(cols)
-      if (is.na(cols) || cols <= 0) return(integer(0))
-      rep(base_width, cols)
-    }
-
-      # UI for grid
-      output$report_canvas <- renderUI({
-        new_report_token()
-        rows <- as.integer(input$report_rows); cols <- as.integer(input$report_cols)
-        cells <- current_cells()  # React to cell changes including span
-        is_multi_player <- input$report_scope == "Multi-Player"
-        
-        # Add reactive dependency on all span inputs to trigger re-render when span changes
-        for (r in seq_len(rows)) {
-          for (c in seq_len(cols)) {
-            cell_id <- paste0("r", r, "c", c)
-            input[[paste0("cell_span_", cell_id)]]
-          }
-        }
-        
+    # UI for grid
+    output$report_canvas <- renderUI({
+      rows <- as.integer(input$report_rows); cols <- as.integer(input$report_cols)
+      cells <- isolate(current_cells())  # Use isolate to prevent re-rendering on cell changes
+      is_multi_player <- input$report_scope == "Multi-Player"
+      
       # Helper function to format player names from "Last, First" to "First Last"
       format_player_name <- function(player_name) {
         if (is.null(player_name) || !nzchar(player_name)) return("")
@@ -16572,7 +15664,7 @@ custom_reports_server <- function(id) {
         }
         
         # Build cells for this row
-        cell_infos <- lapply(seq_len(cols), function(cn) {
+        row_cells <- lapply(seq_len(cols), function(cn) {
           cell_id <- paste0("r", r, "c", cn)
           sel <- cells[[cell_id]] %||% list(
             type = "", 
@@ -16583,137 +15675,63 @@ custom_reports_server <- function(id) {
             table_custom_cols = character(0),
             color = TRUE,
             heat_stat = "Frequency",
-            filter_select = c("Dates","Session Type","Pitch Types"),
-            span = 1
+            filter_select = c("Dates","Session Type","Pitch Types")
           )
-          settings_cell_id <- if (is_multi_player && r > 1) paste0("r1c", cn) else cell_id
-          settings_sel <- cells[[settings_cell_id]] %||% sel
-          cell_type_selected <- input[[paste0("cell_type_", settings_cell_id)]] %||% settings_sel$type %||% ""
-          is_summary_table <- identical(cell_type_selected, "Summary Table")
+          width <- if (cols == 1) 8 else if (cols == 2) 6 else if (cols == 3) 4 else if (cols == 4) 3 else 2
+          offset <- if (cols == 1 && cn == 1) 2 else 0
+          
+          # In Multi-Player mode, rows 2+ use row 1's settings
           is_controlled_row <- is_multi_player && r > 1
-          list(
-            cell_id = cell_id,
-            sel = sel,
-            settings_cell_id = settings_cell_id,
-            settings_sel = settings_sel,
-            span = sel$span %||% 1,
-            settings_span = settings_sel$span %||% sel$span %||% 1,
-            is_summary = is_summary_table,
-            is_controlled_row = is_controlled_row
-          )
-        })
-
-        base_width <- if (cols == 1) 8 else if (cols == 2) 6 else if (cols == 3) 4 else if (cols == 4) 3 else 2
-        widths <- compute_column_widths(cols, base_width)
-
-        col_used <- rep(FALSE, cols)
-        row_cells <- lapply(seq_len(cols), function(cn) {
-          if (col_used[cn]) return(NULL)
-          info <- cell_infos[[cn]]
-          span_val <- suppressWarnings(as.integer(info$settings_span %||% info$span %||% 1))
-          if (is.na(span_val) || span_val < 1) span_val <- 1
-          max_span <- cols - (cn - 1)
-          span_val <- min(span_val, max_span)
-          col_idx <- seq.int(cn, cn + span_val - 1)
-          width <- sum(widths[col_idx])
-          offset <- if (cols == 1 && cn == 1 && width < 12) floor((12 - width) / 2) else 0
-          col_used[col_idx] <<- TRUE
-
+          
           column(
             width = width, offset = offset,
             div(class = "creport-cell",
                 # Always create controls to preserve state, but hide them for rows 2+ in Multi-Player mode
                 # Title and show controls toggle
                 div(style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;",
-                    if (!info$is_controlled_row) {
-                      checkboxInput(ns(paste0("cell_show_controls_", info$cell_id)), "Show controls", 
-                                    value = info$sel$show_controls %||% TRUE, width = "120px")
+                    if (!is_controlled_row) {
+                      # Row 1 or Single-Player mode: show checkbox
+                      checkboxInput(ns(paste0("cell_show_controls_", cell_id)), "Show controls", 
+                                    value = sel$show_controls %||% TRUE, width = "120px")
                     }
                 ),
                 # Controls container - always render but hide with CSS for rows 2+
                 div(
-                  id = ns(paste0("cell_controls_container_", info$cell_id)),
-                  style = if (info$is_controlled_row) "display:none;" else "",
+                  id = ns(paste0("cell_controls_container_", cell_id)),
+                  style = if (is_controlled_row) "display:none;" else "",  # Hide for rows 2+ using CSS
                   conditionalPanel(
-                    condition = if (info$is_controlled_row) "false" else sprintf("input['%s']", ns(paste0("cell_show_controls_", info$cell_id))),
+                    condition = if (is_controlled_row) "false" else sprintf("input['%s']", ns(paste0("cell_show_controls_", cell_id))),
                     div(
-                      div(
-                        textInput(ns(paste0("cell_title_", info$cell_id)), "Chart Title:", 
-                                  value = info$sel$title %||% "", placeholder = "Enter chart title..."),
-                        tags$script(HTML(sprintf("
-                          (function() {
-                            var id = '%s';
-                            var blurId = '%s';
-                            var pendingId = '%s';
-                            var el = document.getElementById(id);
-                            if (!el) return;
-                            el.removeEventListener('blur', el.__cell_title_blur_listener__);
-                            el.removeEventListener('input', el.__cell_title_input_listener__);
-                            var blurListener = function() {
-                              Shiny.setInputValue(blurId, el.value, {priority: 'event'});
-                            };
-                            var inputListener = function() {
-                              Shiny.setInputValue(pendingId, el.value, {priority: 'event'});
-                            };
-                            el.__cell_title_blur_listener__ = blurListener;
-                            el.__cell_title_input_listener__ = inputListener;
-                            el.addEventListener('blur', blurListener);
-                            el.addEventListener('input', inputListener);
-                            inputListener();
-                          })();
-                        ", ns(paste0("cell_title_", info$cell_id)), ns(paste0("cell_title_blur_", info$cell_id)),
-                           ns(paste0("cell_title_pending_", info$cell_id)))))
-                      ),
-                      selectInput(ns(paste0("cell_type_", info$cell_id)), "Content:", 
+                      # Title input - only visible when controls are shown
+                      textInput(ns(paste0("cell_title_", cell_id)), "Chart Title:", 
+                                value = sel$title %||% "", placeholder = "Enter chart title..."),
+                      selectInput(ns(paste0("cell_type_", cell_id)), "Content:", 
                                   choices = c("", "Movement Plot", "Release Plot", "Location Plot", "Heatmap", "Summary Table", "Spray Chart"),
-                                  selected = info$sel$type),
-                      {
-                        cols_total <- as.integer(input$report_cols)
-                        if (is.na(cols_total) || cols_total < 1) cols_total <- 1
-                        col_num <- as.integer(sub(".*c(\\d+)$", "\\1", info$cell_id))
-                        if (is.na(col_num) || col_num < 1) col_num <- 1
-                        max_span <- max(1, cols_total - (col_num - 1))
-                        span_id <- ns(paste0("cell_span_", info$cell_id))
-                        default_span <- info$settings_span %||% info$span %||% 1
-                        existing_span <- input[[span_id]] %||% default_span
-                        existing_span <- suppressWarnings(as.integer(existing_span))
-                        if (is.na(existing_span) || existing_span < 1) existing_span <- 1
-                        existing_span <- min(existing_span, max_span)
-                        numericInput(span_id, "Column span:", min = 1, max = max_span, value = existing_span)
-                      },
+                                  selected = sel$type),
                       conditionalPanel(
-                        sprintf("input['%s'] == 'Summary Table'", ns(paste0("cell_type_", info$cell_id))),
+                        sprintf("input['%s'] == 'Summary Table'", ns(paste0("cell_type_", cell_id))),
                         tagList(
-                          selectInput(ns(paste0("cell_table_mode_", info$cell_id)), "Table:", 
-                                      choices = if (input$report_type == "Hitting") {
-                                        c("Results","Swing Decisions", names(custom_tables()), "Custom")
-                                      } else {
-                                        c("Stuff","Process","Results","Bullpen","Live","Usage","Raw Data", names(custom_tables()), "Custom")
-                                      },
+                          selectInput(ns(paste0("cell_table_mode_", cell_id)), "Table:", 
+                                      choices = if (input$report_type == "Hitting") c("Results","Swing Decisions","Custom") else c("Stuff","Process","Results","Bullpen","Live","Usage","Raw Data",
+                                                                                                                                   names(custom_tables()), "Custom"),
                                       selected = {
-                                        ch <- if (input$report_type == "Hitting") {
-                                          c("Results","Swing Decisions", names(custom_tables()), "Custom")
-                                        } else {
-                                          c("Stuff","Process","Results","Bullpen","Live","Usage","Raw Data", names(custom_tables()), "Custom")
-                                        }
-                                        if (!is.null(info$sel$table_mode) && info$sel$table_mode %in% ch) info$sel$table_mode else ch[[1]]
+                                        ch <- if (input$report_type == "Hitting") c("Results","Swing Decisions","Custom") else c("Stuff","Process","Results","Bullpen","Live","Usage","Raw Data",
+                                                                                                                                 names(custom_tables()), "Custom")
+                                        if (!is.null(sel$table_mode) && sel$table_mode %in% ch) sel$table_mode else ch[[1]]
                                       }),
-                          selectInput(ns(paste0("cell_filter_", info$cell_id)), "Split By:", 
+                          selectInput(ns(paste0("cell_filter_", cell_id)), "Split By:", 
                                       choices = c("Pitch Types","Batter Hand","Pitcher Hand","Count","After Count","Velocity","IVB","HB","Batter"),
-                                      selected = info$sel$filter),
-                          checkboxInput(ns(paste0("cell_color_", info$cell_id)), "Color-Code", value = info$sel$color %||% TRUE),
+                                      selected = sel$filter),
+                          checkboxInput(ns(paste0("cell_color_", cell_id)), "Color-Code", value = sel$color %||% TRUE),
                           conditionalPanel(
                             condition = sprintf("input['%s']=='Custom' && input['%s']=='Hitting'", 
-                                                ns(paste0("cell_table_mode_", info$cell_id)), ns("report_type")),
+                                                ns(paste0("cell_table_mode_", cell_id)), ns("report_type")),
                             selectizeInput(
-                              ns(paste0("cell_table_custom_cols_", info$cell_id)),
+                              ns(paste0("cell_table_custom_cols_", cell_id)),
                               "Columns (drag to order):",
-                              choices = c("PA","AB","AVG","SLG","OBP","OPS","wOBA","xWOBA","ISO","xISO","BABIP",
-                                          "Velo","IVB","HB","Distance","RV/100","1-1W%","QP%","QP+",
-                                          "Swing%","FPS%","Called-S%","Take%","Whiff%","CSW%","GB%","K%","BB%","Barrel%",
-                                          "Chase%","GoZoneSw%","IZswing%","EdgeSwing%","PosSD%","EV","LA",
-                                          "Swings","Takes","Called-S","Whiffs","Chases","IZswings","Barrels","FPS","EdgeSwings","PosSD","GoZoneSw"),
-                              selected = info$sel$table_custom_cols %||% c("PA","AB","AVG","SLG","OBP","OPS","Swing%","Whiff%"),
+                              choices = c("PA","AB","AVG","SLG","OBP","OPS","xWOBA","xISO","BABIP",
+                                          "Swing%","Whiff%","CSW%","GB%","K%","BB%","Barrel%","EV","LA"),
+                              selected = sel$table_custom_cols %||% c("PA","AB","AVG","SLG","OBP","OPS","Swing%","Whiff%"),
                               multiple = TRUE,
                               options  = list(plugins = list("drag_drop","remove_button"), placeholder = "Choose columns…")
                             )
@@ -16721,34 +15739,36 @@ custom_reports_server <- function(id) {
                         )
                       ),
                       conditionalPanel(
-                        sprintf("input['%s'] == 'Heatmap'", ns(paste0("cell_type_", info$cell_id))),
-                        selectInput(ns(paste0("cell_heat_stat_", info$cell_id)), "Heatmap Type:",
+                        sprintf("input['%s'] == 'Heatmap'", ns(paste0("cell_type_", cell_id))),
+                        selectInput(ns(paste0("cell_heat_stat_", cell_id)), "Heatmap Type:",
                                     choices = c("Frequency","Whiff Rate","Exit Velocity","GB Rate","Contact Rate","Swing Rate","Run Values"),
-                                    selected = info$sel$heat_stat %||% "Frequency")
+                                    selected = sel$heat_stat %||% "Frequency")
                       ),
+                      # Per-cell filters (collapsed set)
                       selectizeInput(
-                        ns(paste0("cell_filter_select_", info$cell_id)),
+                        ns(paste0("cell_filter_select_", cell_id)),
                         "Filters to show:",
                         choices = c("Dates","Session Type","Pitch Types","Batter Hand","Pitcher Hand","Pitch Results","QP Locations",
                                     "Count","After Count","Zone Location","Velo Min/Max","IVB Min/Max","HB Min/Max"),
-                        selected = info$sel$filter_select %||% c("Dates","Session Type","Pitch Types"),
+                        selected = sel$filter_select %||% c("Dates","Session Type","Pitch Types"),
                         multiple = TRUE,
                         options = list(plugins = list("remove_button"))
                       ),
-                      uiOutput(ns(paste0("cell_filters_", info$cell_id)))
+                      uiOutput(ns(paste0("cell_filters_", cell_id)))
                     )
                   )
                 ),
+                # Title display - non-reactive div updated via JavaScript
                 div(
-                  id = ns(paste0("cell_title_display_", info$cell_id)),
+                  id = ns(paste0("cell_title_display_", cell_id)),
                   style = "text-align:center; margin-bottom:10px; font-weight:bold;",
-                  ""
+                  ""  # Empty initially, updated via JS
                 ),
-                uiOutput(ns(paste0("cell_output_", info$cell_id)))
+                # Cell output - always rendered
+                uiOutput(ns(paste0("cell_output_", cell_id)))
             )
           )
         })
-        row_cells <- Filter(Negate(is.null), row_cells)
         
         # Return player name (if Multi-Player) followed by the row of charts
         tagList(player_name_row, fluidRow(row_cells))
@@ -16762,7 +15782,6 @@ custom_reports_server <- function(id) {
       # Don't update if we're currently loading a saved report
       if (loading_report()) return()
       
-      new_report_token()
       rows <- as.integer(input$report_rows); cols <- as.integer(input$report_cols)
       
       # Validate that rows and cols are valid integers
@@ -16771,7 +15790,6 @@ custom_reports_server <- function(id) {
       if (rows < 1 || cols < 1) return()
       
       cells <- isolate(current_cells())  # Use isolate to prevent dependency loops
-      title_vals <- isolate(cell_titles())
       
       # Save row players in Multi-Player mode
       if (input$report_scope == "Multi-Player") {
@@ -16802,7 +15820,7 @@ custom_reports_server <- function(id) {
           cells[[id]] <- list(
             type = update_if_exists(input[[paste0("cell_type_", id)]], existing_cell$type, ""),
             filter = update_if_exists(input[[paste0("cell_filter_", id)]], existing_cell$filter, "Pitch Types"),
-            title = title_vals[[id]] %||% existing_cell$title %||% "",  # Prefer latest debounced title
+            title = update_if_exists(input[[paste0("cell_title_", id)]], existing_cell$title, ""),
             show_controls = update_if_exists(input[[paste0("cell_show_controls_", id)]], existing_cell$show_controls, TRUE),
             table_mode = update_if_exists(input[[paste0("cell_table_mode_", id)]], existing_cell$table_mode, "Stuff"),
             table_custom_cols = update_if_exists(input[[paste0("cell_table_custom_cols_", id)]], existing_cell$table_custom_cols, character(0)),
@@ -16825,74 +15843,13 @@ custom_reports_server <- function(id) {
             ivb_min = update_if_exists(input[[paste0("cell_ivb_min_", id)]], existing_cell$ivb_min),
             ivb_max = update_if_exists(input[[paste0("cell_ivb_max_", id)]], existing_cell$ivb_max),
             hb_min = update_if_exists(input[[paste0("cell_hb_min_", id)]], existing_cell$hb_min),
-            hb_max = update_if_exists(input[[paste0("cell_hb_max_", id)]], existing_cell$hb_max),
-            span = update_if_exists(input[[paste0("cell_span_", id)]], existing_cell$span, 1)
+            hb_max = update_if_exists(input[[paste0("cell_hb_max_", id)]], existing_cell$hb_max)
           )
           # Keep UI in sync with stored state
         }
       }
       current_cells(cells)
-    }) %>% throttle(2000)  # Throttle to 2 seconds to reduce saves during rapid changes
-    
-    # Separate observer to handle title updates with debounce (prevents interruption while typing)
-    # Uses separate cell_titles reactiveVal to avoid re-rendering the entire grid
-    flush_cell_title_now <- function(cell_id, value = NULL) {
-      pending_val <- isolate(input[[paste0("cell_title_pending_", cell_id)]])
-      title_val <- if (!is.null(value)) value else if (!is.null(pending_val)) pending_val else isolate(input[[paste0("cell_title_", cell_id)]])
-      if (is.null(title_val)) return(invisible(NULL))
-      titles <- isolate(cell_titles())
-      if (identical(titles[[cell_id]], title_val)) return(invisible(NULL))
-      titles[[cell_id]] <- title_val
-      cell_titles(titles)
-      cells <- isolate(current_cells())
-      existing_cell <- cells[[cell_id]] %||% list()
-      existing_cell$title <- title_val
-      cells[[cell_id]] <- existing_cell
-      current_cells(cells)
-    }
-
-    created_title_flush_ids <- character(0)
-
-    observeEvent(list(input$report_rows, input$report_cols), {
-      rows <- as.integer(input$report_rows); cols <- as.integer(input$report_cols)
-      if (length(rows) == 0 || length(cols) == 0 || is.na(rows) || is.na(cols) || rows < 1 || cols < 1) return()
-      for (r in seq_len(rows)) {
-        for (c in seq_len(cols)) {
-          cell_id <- paste0("r", r, "c", c)
-          if (cell_id %in% created_title_flush_ids) next
-          created_title_flush_ids <<- c(created_title_flush_ids, cell_id)
-          local({
-            id <- cell_id
-            observeEvent(input[[paste0("cell_show_controls_", id)]], {
-              if (!isTRUE(isolate(input[[paste0("cell_show_controls_", id)]]))) {
-                flush_cell_title_now(id)
-              }
-            }, ignoreInit = TRUE)
-            observeEvent(input[[paste0("cell_title_blur_", id)]], {
-              flush_cell_title_now(id, value = input[[paste0("cell_title_blur_", id)]])
-            }, ignoreInit = TRUE)
-          })
-        }
-      }
-    }, ignoreInit = FALSE)
-
-
-    # Sync titles from cell_titles back to current_cells (so they're saved permanently)
-    observe({
-      titles <- cell_titles()
-      cells <- isolate(current_cells())
-      
-      # Update titles in cells
-      for (cell_id in names(titles)) {
-        if (!is.null(cells[[cell_id]])) {
-          cells[[cell_id]]$title <- titles[[cell_id]]
-        } else {
-          # Create new cell entry if it doesn't exist
-          cells[[cell_id]] <- list(title = titles[[cell_id]])
-        }
-      }
-      current_cells(cells)
-    }) %>% debounce(500)  # Reduced to 500ms for faster syncing
+    }) %>% throttle(500)  # Reduced throttle for better responsiveness
     
     # Helper: get filtered dataset for player(s) for a given cell
     # This is now a pure function that will be cached via bindCache in the reactive
@@ -16900,8 +15857,6 @@ custom_reports_server <- function(id) {
                               batter_side, pitcher_hand, results, qp, count, after_count, 
                               zone, velo_min, velo_max, ivb_min, ivb_max, hb_min, hb_max) {
       if (is.null(players) || length(players) == 0) return(data.frame())
-      report_type <- as.character(report_type)[1]
-      if (is.na(report_type) || !nzchar(report_type)) return(data.frame())
       
       # Handle "All" selection - get all data for that report type
       if (report_type == "Pitching") {
@@ -16952,50 +15907,16 @@ custom_reports_server <- function(id) {
       if (!is.null(dates) && length(dates) == 2) {
         df <- df %>% dplyr::filter(Date >= dates[1], Date <= dates[2])
       }
-      safe_values <- function(x) {
-        if (is.null(x)) return(NULL)
-        v <- as.character(x)
-        v <- v[!is.na(v)]
-        if (!length(v)) return(NULL)
-        v
-      }
-      session <- safe_values(session)
-      if (!is.null(session) && !all(session == "All")) {
-        if (!("All" %in% session)) {
-          df <- df %>% dplyr::filter(SessionType %in% session)
-        }
-      }
-
-      pitch_types <- pitch_types %||% character(0)
-      pitch_types <- as.character(pitch_types)
-      pitch_types <- pitch_types[!is.na(pitch_types)]
-      include_all_pt <- length(pitch_types) && any(pitch_types == "All")
-      if (length(pitch_types) && !include_all_pt) {
-        df <- df %>% dplyr::filter(TaggedPitchType %in% pitch_types)
-      }
-
-      batter_side <- safe_values(batter_side)
-      if (!is.null(batter_side) && !("All" %in% batter_side)) {
-        df <- df %>% dplyr::filter(BatterSide == batter_side[1])
-      }
-
-      pitcher_hand <- safe_values(pitcher_hand)
-      if (!is.null(pitcher_hand) && !("All" %in% pitcher_hand)) {
-        df <- df %>% dplyr::filter(PitcherThrows == pitcher_hand[1])
-      }
+      if (!is.null(session) && session != "All") df <- df %>% dplyr::filter(SessionType %in% session)
+      if (!is.null(pitch_types) && length(pitch_types) && !("All" %in% pitch_types)) df <- df %>% dplyr::filter(TaggedPitchType %in% pitch_types)
+      if (!is.null(batter_side) && batter_side != "All") df <- df %>% dplyr::filter(BatterSide == batter_side)
+      if (!is.null(pitcher_hand) && pitcher_hand != "All") df <- df %>% dplyr::filter(PitcherThrows == pitcher_hand)
       df <- apply_pitch_results_filter(df, results)
-      qp <- safe_values(qp)
-      if (!is.null(qp) && !("All" %in% qp)) df <- filter_qp_locations(df, qp)
+      if (!is.null(qp) && qp != "All") df <- filter_qp_locations(df, qp)
       df <- apply_count_filter(df, count)
       df <- apply_after_count_filter(df, after_count)
-      zone <- safe_values(zone)
       df <- enforce_zone(df, zone)
-      nnz <- function(x) {
-        if (is.null(x)) return(FALSE)
-        nums <- suppressWarnings(as.numeric(x))
-        nums <- nums[is.finite(nums)]
-        length(nums) > 0
-      }
+      nnz <- function(x) !is.null(x) && suppressWarnings(is.finite(as.numeric(x)))
       if (nnz(velo_min))   df <- df %>% dplyr::filter(RelSpeed >= as.numeric(velo_min))
       if (nnz(velo_max))   df <- df %>% dplyr::filter(RelSpeed <= as.numeric(velo_max))
       if (nnz(ivb_min)) df <- df %>% dplyr::filter(InducedVertBreak >= as.numeric(ivb_min))
@@ -17030,15 +15951,10 @@ custom_reports_server <- function(id) {
         row_player
       } else {
         # Single Player mode - use main player selector
-        single_players <- input$report_players
-        if (is.null(single_players) || length(single_players) == 0 ||
-            all(trimws(single_players) == "")) {
-          single_players <- "All"
-        }
-        single_players
+        input$report_players
       }
       
-      # Allow "All" (or defaulted) but require something
+      # Allow "All" or empty to pass through, but require something
       if (is.null(players) || (length(players) == 1 && !nzchar(players))) {
         return(data.frame())
       }
@@ -17057,28 +15973,26 @@ custom_reports_server <- function(id) {
         cell_id
       }
       
-      cell_state <- current_cells()[[filter_cell_id]] %||% list()
-
       get_cell_data(
         cell_id = cell_id,
         players = players,
         report_type = input$report_type,
-        dates = input[[paste0("cell_dates_", filter_cell_id)]] %||% cell_state$dates,
-        session = input[[paste0("cell_session_", filter_cell_id)]] %||% cell_state$session %||% "All",
-        pitch_types = input[[paste0("cell_pitch_types_", filter_cell_id)]] %||% cell_state$pitch_types,
-        batter_side = input[[paste0("cell_batter_side_", filter_cell_id)]] %||% cell_state$batter_side,
-        pitcher_hand = input[[paste0("cell_pitcher_hand_", filter_cell_id)]] %||% cell_state$pitcher_hand,
-        results = input[[paste0("cell_results_", filter_cell_id)]] %||% cell_state$results,
-        qp = input[[paste0("cell_qp_", filter_cell_id)]] %||% cell_state$qp,
-        count = input[[paste0("cell_count_", filter_cell_id)]] %||% cell_state$count,
-        after_count = input[[paste0("cell_after_count_", filter_cell_id)]] %||% cell_state$after_count,
-        zone = input[[paste0("cell_zone_", filter_cell_id)]] %||% cell_state$zone,
-        velo_min = input[[paste0("cell_velo_min_", filter_cell_id)]] %||% cell_state$velo_min,
-        velo_max = input[[paste0("cell_velo_max_", filter_cell_id)]] %||% cell_state$velo_max,
-        ivb_min = input[[paste0("cell_ivb_min_", filter_cell_id)]] %||% cell_state$ivb_min,
-        ivb_max = input[[paste0("cell_ivb_max_", filter_cell_id)]] %||% cell_state$ivb_max,
-        hb_min = input[[paste0("cell_hb_min_", filter_cell_id)]] %||% cell_state$hb_min,
-        hb_max = input[[paste0("cell_hb_max_", filter_cell_id)]] %||% cell_state$hb_max
+        dates = input[[paste0("cell_dates_", filter_cell_id)]],
+        session = input[[paste0("cell_session_", filter_cell_id)]] %||% "All",
+        pitch_types = input[[paste0("cell_pitch_types_", filter_cell_id)]],
+        batter_side = input[[paste0("cell_batter_side_", filter_cell_id)]],
+        pitcher_hand = input[[paste0("cell_pitcher_hand_", filter_cell_id)]],
+        results = input[[paste0("cell_results_", filter_cell_id)]],
+        qp = input[[paste0("cell_qp_", filter_cell_id)]],
+        count = input[[paste0("cell_count_", filter_cell_id)]],
+        after_count = input[[paste0("cell_after_count_", filter_cell_id)]],
+        zone = input[[paste0("cell_zone_", filter_cell_id)]],
+        velo_min = input[[paste0("cell_velo_min_", filter_cell_id)]],
+        velo_max = input[[paste0("cell_velo_max_", filter_cell_id)]],
+        ivb_min = input[[paste0("cell_ivb_min_", filter_cell_id)]],
+        ivb_max = input[[paste0("cell_ivb_max_", filter_cell_id)]],
+        hb_min = input[[paste0("cell_hb_min_", filter_cell_id)]],
+        hb_max = input[[paste0("cell_hb_max_", filter_cell_id)]]
       )
     }
     
@@ -17125,6 +16039,12 @@ custom_reports_server <- function(id) {
         output[[out_id]] <- renderUI({ div("No data") })
         return(uiOutput(ns(out_id)))
       }
+      if (tsel == "Summary Table") {
+        df <- apply_split_by(df, fsel)
+        split_col <- if ("SplitColumn" %in% names(df)) "SplitColumn" else "TaggedPitchType"
+        df$SplitColumn <- df[[split_col]]
+      }
+      
       if (tsel == "Movement Plot") {
         df_mv <- df %>% dplyr::filter(is.finite(HorzBreak), is.finite(InducedVertBreak))
         if (!"Stuff+" %in% names(df_mv) && "StuffPlus" %in% names(df_mv)) df_mv$`Stuff+` <- df_mv$StuffPlus
@@ -17600,26 +16520,460 @@ custom_reports_server <- function(id) {
         return(plotOutput(ns(out_id), height = "280px"))
       } else if (tsel == "Summary Table") {
         output[[out_id]] <- DT::renderDataTable({
+          # Add tryCatch wrapper for entire table rendering to handle filter transitions
           tryCatch({
-            table_mode <- input[[paste0("cell_table_mode_", settings_cell_id)]] %||%
-              (if (input$report_type == "Hitting") "Results" else "Stuff")
-            custom_cols <- input[[paste0("cell_table_custom_cols_", settings_cell_id)]] %||% character(0)
-            res_mode <- resolve_table_mode_global(table_mode, custom_cols)
-            df_tbl <- apply_split_by(df, fsel)
-            attr(df_tbl, "domain") <- if (input$report_type == "Hitting") "Hitter" else "Pitcher"
-            attr(df_tbl, "split_choice") <- fsel
-            .dp_like_table(
-              df_tbl,
-              res_mode$mode,
-              res_mode$cols,
-              enable_colors = isTRUE(input[[paste0("cell_color_", settings_cell_id)]])
-            )
+            df_tbl <- df
+            
+            is_hitting_mode <- !is.null(input$report_type) && input$report_type == "Hitting"
+            
+            if (is_hitting_mode) {
+              mode_choice <- input[[paste0("cell_table_mode_", settings_cell_id)]] %||% "Results"
+              fmt_avg_local <- function(x) {
+                x <- suppressWarnings(as.numeric(x))
+                s <- ifelse(is.finite(x), sprintf("%.3f", x), "")
+                sub("^0\\.", ".", s)
+              }
+              if (!"SplitColumn" %in% names(df_tbl)) df_tbl$SplitColumn <- df_tbl$TaggedPitchType
+              split_choice <- fsel
+              df_tbl <- apply_split_by(df_tbl, split_choice)
+              if (!"SplitColumn" %in% names(df_tbl) && split_col_name %in% names(df_tbl)) {
+                df_tbl$SplitColumn <- df_tbl[[split_col_name]]
+              }
+              
+              split_col_name <- switch(
+                split_choice,
+                "Pitch Types" = "Pitch",
+                "Pitcher Hand" = "Pitcher Hand",
+                "Count" = "Count",
+                "After Count" = "After Count",
+                "Velocity" = "Velocity",
+                "IVB" = "InducedVert",
+                "HB" = "HorzBreak",
+                "Pitcher" = "Pitcher",
+                "Pitch"  # default
+              )
+              
+              if (!nrow(df_tbl)) return(data.frame(Message = "No data"))
+              
+              swing_levels <- c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","InPlay")
+              safe_terminal_check <- function(play_result, korbb) {
+                play_ok <- !is.na(play_result) & play_result != "Undefined"
+                korbb_ok <- !is.na(korbb) & korbb %in% c("Strikeout","Walk")
+                return(play_ok | korbb_ok)
+              }
+              
+              is_terminal <- safe_terminal_check(df_tbl$PlayResult, df_tbl$KorBB)
+              term <- df_tbl[is_terminal, , drop = FALSE]
+              
+              if (nrow(term) == 0) {
+                return(DT::datatable(
+                  data.frame(Message = "No completed plate appearances in selected data"),
+                  options = list(dom = 't', autoWidth = FALSE), rownames = FALSE
+                ))
+              }
+              
+              # Helper: Results table (same as hitting suite)
+              # Local helper for safe division (match hitting suite)
+              safe_div_local <- function(num, den) {
+                num <- suppressWarnings(as.numeric(num))
+                den <- suppressWarnings(as.numeric(den))
+                ifelse(is.finite(den) & den != 0 & is.finite(num), num/den, NA_real_)
+              }
+              
+              build_results_table <- function(df_src) {
+                per_type <- term %>%
+                  dplyr::group_by(SplitColumn) %>%
+                  dplyr::summarise(
+                    PA   = dplyr::n(),
+                    HBP  = sum(PlayResult == "HitByPitch", na.rm = TRUE),
+                    Sac  = sum(PlayResult == "Sacrifice",  na.rm = TRUE),
+                    H1 = sum(PlayResult == "Single",  na.rm = TRUE),
+                    H2 = sum(PlayResult == "Double",  na.rm = TRUE),
+                    H3 = sum(PlayResult == "Triple",  na.rm = TRUE),
+                    HR   = sum(PlayResult == "HomeRun", na.rm = TRUE),
+                    Kct  = sum(KorBB == "Strikeout" |
+                                 PlayResult %in% c("Strikeout","StrikeoutSwinging","StrikeoutLooking"), na.rm = TRUE),
+                    BBct = sum(KorBB == "Walk" | PlayResult == "Walk", na.rm = TRUE),
+                    .groups = "drop"
+                  ) %>%
+                  dplyr::mutate(
+                    AB  = PA - (BBct + HBP + Sac),
+                    H   = H1 + H2 + H3 + HR,
+                    TB  = 1*H1 + 2*H2 + 3*H3 + 4*HR,
+                    AVG = dplyr::if_else(AB > 0, H / AB, 0),
+                    SLG = dplyr::if_else(AB > 0, TB / AB, 0),
+                    OBP = dplyr::if_else(PA > 0, (H + BBct + HBP) / PA, 0),
+                    OPS = SLG + OBP
+                  )
+                
+                pitch_totals <- df_src %>%
+                  dplyr::group_by(SplitColumn) %>%
+                  dplyr::summarise(
+                    Pitches = dplyr::n(),
+                    Swings  = sum(!is.na(PitchCall) & PitchCall %in% swing_levels, na.rm = TRUE),
+                    Whiffs  = sum(!is.na(PitchCall) & PitchCall == "StrikeSwinging", na.rm = TRUE),
+                    .groups = "drop"
+                  )
+                
+                bbe <- df_src %>%
+                  dplyr::filter(
+                    !is.na(SessionType),
+                    grepl("live|game|ab", tolower(SessionType)), 
+                    !is.na(PitchCall),
+                    PitchCall == "InPlay"
+                  )
+                
+                evla <- if (nrow(bbe) > 0) {
+                  bbe %>%
+                    dplyr::group_by(SplitColumn) %>%
+                    dplyr::summarise(
+                      EV = mean(ExitSpeed, na.rm = TRUE), 
+                      LA = mean(Angle, na.rm = TRUE),
+                      GBpct = sum(!is.na(TaggedHitType) & TaggedHitType == "GroundBall", na.rm = TRUE) / sum(!is.na(TaggedHitType), na.rm = TRUE),
+                      .groups = "drop"
+                    )
+                } else {
+                  data.frame(SplitColumn = character(0), EV = numeric(0), LA = numeric(0), GBpct = numeric(0))
+                }
+                
+                out <- per_type %>%
+                  dplyr::left_join(pitch_totals, by = "SplitColumn") %>%
+                  dplyr::left_join(evla, by = "SplitColumn") %>%
+                  dplyr::mutate(
+                    `Swing%` = dplyr::if_else(Pitches > 0, Swings / Pitches, 0),
+                    `Whiff%` = dplyr::if_else(Swings > 0, Whiffs / Swings, 0),
+                    `GB%` = dplyr::coalesce(GBpct, 0),
+                    `K%` = dplyr::if_else(PA > 0, Kct / PA, 0),
+                    `BB%` = dplyr::if_else(PA > 0, BBct / PA, 0)
+                  ) %>%
+                  dplyr::transmute(
+                    !!split_col_name := as.character(SplitColumn),
+                    PA, AB, AVG, SLG, OBP, OPS,
+                    xWOBA = NA_real_, xISO = NA_real_, BABIP = NA_real_,
+                    `Swing%`, `Whiff%`, `GB%`, `K%`, `BB%`, `Barrel%` = NA_real_, EV, LA
+                  )
+                
+                # Process extras (xWOBA/xISO/BABIP/Barrel%) from compute_process_results
+                extras_raw <- compute_process_results(df_src)
+                if ("PitchType" %in% names(extras_raw)) {
+                  extras <- extras_raw %>%
+                    dplyr::rename(!!split_col_name := PitchType) %>%
+                    dplyr::mutate(
+                      xWOBA     = suppressWarnings(as.numeric(xWOBA)),
+                      xISO      = suppressWarnings(as.numeric(xISO)),
+                      BABIP     = suppressWarnings(as.numeric(BABIP)),
+                      `Barrel%` = suppressWarnings(as.numeric(`Barrel%`))
+                    ) %>%
+                    dplyr::select(.data[[split_col_name]], xWOBA, xISO, BABIP, `Barrel%`)
+                } else {
+                  extras <- tibble::tibble(
+                    !!split_col_name := character(0),
+                    xWOBA = numeric(0), xISO = numeric(0), BABIP = numeric(0), `Barrel%` = numeric(0)
+                  )
+                }
+                
+                # Barrel% per split (fallback to ensure non-blank)
+                barrels_df <- df_src %>%
+                  dplyr::group_by(SplitColumn) %>%
+                  dplyr::summarise(
+                    BarrelPct = safe_div_local(
+                      sum(SessionType == "Live" & PitchCall == "InPlay" &
+                            is.finite(ExitSpeed) & is.finite(Angle) &
+                            ExitSpeed >= 95 & Angle >= 10 & Angle <= 35, na.rm = TRUE),
+                      sum(SessionType == "Live" & PitchCall == "InPlay", na.rm = TRUE)
+                    ),
+                    .groups = "drop"
+                  ) %>%
+                  dplyr::rename(!!split_col_name := SplitColumn)
+                
+                # ALL row
+                PAt <- nrow(term)
+                HBP_all <- sum(term$PlayResult == "HitByPitch", na.rm = TRUE)
+                Sac_all <- sum(term$PlayResult == "Sacrifice",  na.rm = TRUE)
+                H1  <- sum(term$PlayResult == "Single",  na.rm = TRUE)
+                H2  <- sum(term$PlayResult == "Double",  na.rm = TRUE)
+                H3  <- sum(term$PlayResult == "Triple",  na.rm = TRUE)
+                HR  <- sum(term$PlayResult == "HomeRun", na.rm = TRUE)
+                H   <- H1 + H2 + H3 + HR
+                TB  <- 1*H1 + 2*H2 + 3*H3 + 4*HR
+                Kct_all <- sum(term$KorBB == "Strikeout" |
+                                 term$PlayResult %in% c("Strikeout","StrikeoutSwinging","StrikeoutLooking"), na.rm = TRUE)
+                BBc_all <- sum(term$KorBB == "Walk" | term$PlayResult == "Walk", na.rm = TRUE)
+                ABt <- PAt - (BBc_all + HBP_all + Sac_all)
+                
+                swings_all  <- sum(!is.na(df_src$PitchCall) & df_src$PitchCall %in% swing_levels, na.rm = TRUE)
+                whiffs_all  <- sum(df_src$PitchCall == "StrikeSwinging", na.rm = TRUE)
+                total_pitches <- nrow(df_src)
+                
+                bbe_all <- df_src %>% dplyr::filter(
+                  !is.na(SessionType),
+                  grepl("live|game|ab", tolower(SessionType)), 
+                  !is.na(PitchCall),
+                  PitchCall == "InPlay"
+                )
+                
+                gbpct_all <- safe_div_local(sum(bbe_all$TaggedHitType == "GroundBall", na.rm = TRUE),
+                                            sum(!is.na(bbe_all$TaggedHitType), na.rm = TRUE))
+                
+                all_row <- tibble::tibble(
+                  !!split_col_name := "All",
+                  PA = PAt,
+                  AB = ABt,
+                  AVG = safe_div_local(H, ABt),
+                  SLG = safe_div_local(TB, ABt),
+                  OBP = safe_div_local(H + BBc_all + HBP_all, PAt),
+                  OPS = NA_real_,
+                  xWOBA = NA_real_, xISO = NA_real_, BABIP = NA_real_,
+                  `Swing%` = safe_div_local(swings_all, total_pitches),
+                  `Whiff%` = safe_div_local(whiffs_all, swings_all),
+                  `GB%` = gbpct_all,
+                  `K%` = safe_div_local(Kct_all, PAt),
+                  `BB%` = safe_div_local(BBc_all, PAt),
+                  `Barrel%` = NA_real_,
+                  EV = nz_mean(bbe_all$ExitSpeed),
+                  LA = nz_mean(bbe_all$Angle)
+                ) %>%
+                  dplyr::mutate(OPS = SLG + OBP)
+                
+                # All-row extras
+                extras_all <- compute_process_results(df_src) %>%
+                  dplyr::summarise(
+                    xWOBA     = nz_mean(suppressWarnings(as.numeric(xWOBA))),
+                    xISO      = nz_mean(suppressWarnings(as.numeric(xISO))),
+                    BABIP     = nz_mean(suppressWarnings(as.numeric(BABIP))),
+                    `Barrel%` = nz_mean(suppressWarnings(as.numeric(`Barrel%`))),
+                    .groups = "drop"
+                  )
+                if (nrow(extras_all)) {
+                  all_row$xWOBA     <- extras_all$xWOBA[1]
+                  all_row$xISO      <- extras_all$xISO[1]
+                  all_row$BABIP     <- extras_all$BABIP[1]
+                  all_row$`Barrel%` <- extras_all$`Barrel%`[1]
+                }
+                # All-row Barrel% fallback
+                all_barrel_frac <- safe_div_local(
+                  sum(df_src$SessionType == "Live" & df_src$PitchCall == "InPlay" &
+                        is.finite(df_src$ExitSpeed) & is.finite(df_src$Angle) &
+                        df_src$ExitSpeed >= 95 & df_src$Angle >= 10 & df_src$Angle <= 35, na.rm = TRUE),
+                  sum(df_src$SessionType == "Live" & df_src$PitchCall == "InPlay", na.rm = TRUE)
+                )
+                if (is.finite(all_barrel_frac)) {
+                  all_row$`Barrel%` <- all_barrel_frac
+                }
+                
+                res <- dplyr::bind_rows(out, all_row)
+                # Join per-type extras and barrel fallback
+                if (nrow(extras)) {
+                  res <- res %>% dplyr::left_join(extras, by = split_col_name, suffix = c("", ".ext"))
+                }
+                if (nrow(barrels_df)) {
+                  res <- res %>% dplyr::left_join(barrels_df, by = split_col_name)
+                  res$`Barrel%` <- dplyr::coalesce(res$BarrelPct, res$`Barrel%`)
+                  res$BarrelPct <- NULL
+                }
+                if ("xWOBA.ext" %in% names(res)) {
+                  res <- res %>%
+                    dplyr::mutate(
+                      xWOBA     = dplyr::coalesce(xWOBA.ext, xWOBA),
+                      xISO      = dplyr::coalesce(xISO.ext,  xISO),
+                      BABIP     = dplyr::coalesce(BABIP.ext, BABIP),
+                      `Barrel%` = dplyr::coalesce(`Barrel%.ext`, `Barrel%`)
+                    ) %>%
+                    dplyr::select(-dplyr::ends_with(".ext"))
+                }
+                
+                # Enforce pitch order if splitting by Pitch Types
+                if (identical(split_choice, "Pitch Types") && split_col_name == "Pitch") {
+                  ord <- names(all_colors)
+                  res[[split_col_name]] <- factor(res[[split_col_name]], levels = c(ord, setdiff(res[[split_col_name]], ord)))
+                  res <- res %>% dplyr::arrange(res[[split_col_name]])
+                  res[[split_col_name]] <- as.character(res[[split_col_name]])
+                }
+                
+                res
+              }
+              
+              # Helper: Swing Decision table (same as hitting suite)
+              build_swing_decisions <- function(df_src) {
+                if (!nrow(df_src)) {
+                  return(DT::datatable(
+                    data.frame(Message = "No data for Swing Decisions"),
+                    options = list(dom = 't', autoWidth = FALSE), rownames = FALSE
+                  ))
+                }
+                df_src <- df_src %>%
+                  dplyr::mutate(SplitColumn = dplyr::coalesce(as.character(SplitColumn), "Unknown"))
+                
+                inner_half <- 7 / 12
+                mid_x <- (ZONE_LEFT + ZONE_RIGHT) / 2
+                mid_y <- (ZONE_BOTTOM + ZONE_TOP) / 2
+                green_xmin <- mid_x - inner_half
+                green_xmax <- mid_x + inner_half
+                green_ymin <- mid_y - inner_half
+                green_ymax <- mid_y + inner_half
+                
+                df_sd <- df_src %>%
+                  dplyr::mutate(
+                    is_swing = !is.na(PitchCall) & PitchCall %in% swing_levels,
+                    in_green = !is.na(PlateLocSide) & !is.na(PlateLocHeight) &
+                      PlateLocSide >= green_xmin & PlateLocSide <= green_xmax &
+                      PlateLocHeight >= green_ymin & PlateLocHeight <= green_ymax,
+                    in_zone = !is.na(PlateLocSide) & !is.na(PlateLocHeight) &
+                      PlateLocSide >= ZONE_LEFT & PlateLocSide <= ZONE_RIGHT &
+                      PlateLocHeight >= ZONE_BOTTOM & PlateLocHeight <= ZONE_TOP,
+                    possd_point = dplyr::case_when(
+                      in_green & is_swing ~ 2,
+                      in_green & !is_swing ~ -1,
+                      in_zone & !in_green & is_swing ~ 1,
+                      in_zone & !in_green & !is_swing ~ 0,
+                      !in_zone & is_swing ~ -1,
+                      !in_zone & !is_swing ~ 1,
+                      TRUE ~ 0
+                    )
+                  )
+                
+                summarize_sd <- function(dat) {
+                  total_pitches <- nrow(dat)
+                  swings <- sum(dat$is_swing, na.rm = TRUE)
+                  fps_num <- sum(!is.na(dat$Balls) & !is.na(dat$Strikes) & dat$Balls == 0 & dat$Strikes == 0 &
+                                   !is.na(dat$PitchCall) & dat$PitchCall %in% c("StrikeSwinging","InPlay","FoulBall","FoulBallNotFieldable","FoulBallFieldable"), na.rm = TRUE)
+                  fps_den <- sum(!is.na(dat$Balls) & !is.na(dat$Strikes) & dat$Balls == 0 & dat$Strikes == 0, na.rm = TRUE)
+                  called <- sum(!is.na(dat$PitchCall) & dat$PitchCall == "StrikeCalled", na.rm = TRUE)
+                  chase_num <- sum(dat$is_swing & !dat$in_zone, na.rm = TRUE)
+                  chase_den <- sum(!dat$in_zone, na.rm = TRUE)
+                  gozone_sw_num <- sum(dat$is_swing & dat$in_green, na.rm = TRUE)
+                  gozone_sw_den <- sum(dat$in_green, na.rm = TRUE)
+                  iz_sw_num <- sum(dat$is_swing & dat$in_zone, na.rm = TRUE)
+                  iz_sw_den <- sum(dat$in_zone, na.rm = TRUE)
+                  edge_sw_num <- sum(dat$is_swing & dat$in_zone & !dat$in_green, na.rm = TRUE)
+                  edge_sw_den <- sum(dat$in_zone & !dat$in_green, na.rm = TRUE)
+                  possd_points <- sum(dat$possd_point, na.rm = TRUE)
+                  
+                  tibble::tibble(
+                    `Swing%` = safe_div_local(swings, total_pitches) * 100,
+                    `FPS%` = safe_div_local(fps_num, fps_den) * 100,
+                    `Called%` = safe_div_local(called, total_pitches) * 100,
+                    `Chase%` = safe_div_local(chase_num, chase_den) * 100,
+                    `GoZoneSw%` = safe_div_local(gozone_sw_num, gozone_sw_den) * 100,
+                    `IZswing%` = safe_div_local(iz_sw_num, iz_sw_den) * 100,
+                    `EdgeSwing%` = safe_div_local(edge_sw_num, edge_sw_den) * 100,
+                    `PosSD%` = safe_div_local(possd_points, total_pitches) * 100
+                  )
+                }
+                
+                swing_decision_by_type <- df_sd %>%
+                  dplyr::group_by(SplitColumn, .drop = FALSE) %>%
+                  dplyr::group_modify(~ summarize_sd(.x)) %>%
+                  dplyr::ungroup() %>%
+                  dplyr::rename(!!split_col_name := SplitColumn)
+                
+                all_row <- summarize_sd(df_sd) %>%
+                  dplyr::mutate(!!split_col_name := "All")
+                
+                df_swing_decision <- dplyr::bind_rows(swing_decision_by_type, all_row)
+                
+                pct_cols_sd <- c("Swing%", "FPS%", "Called%", "Chase%", "GoZoneSw%", "IZswing%", "EdgeSwing%", "PosSD%")
+                for (col in pct_cols_sd) if (col %in% names(df_swing_decision)) {
+                  v <- suppressWarnings(as.numeric(df_swing_decision[[col]]))
+                  df_swing_decision[[col]] <- ifelse(is.finite(v), paste0(round(v, 1), "%"), "")
+                }
+                if (identical(split_choice, "Pitch Types") && split_col_name == "Pitch") {
+                  ord <- names(all_colors)
+                  df_swing_decision[[split_col_name]] <- factor(df_swing_decision[[split_col_name]], levels = c(ord, setdiff(df_swing_decision[[split_col_name]], ord)))
+                  df_swing_decision <- df_swing_decision %>% dplyr::arrange(.data[[split_col_name]])
+                  df_swing_decision[[split_col_name]] <- as.character(df_swing_decision[[split_col_name]])
+                }
+                
+                datatable_with_colvis(
+                  df_swing_decision,
+                  lock            = split_col_name,
+                  remember        = FALSE,
+                  default_visible = c(split_col_name, pct_cols_sd),
+                  mode            = NULL,
+                  enable_colors   = FALSE
+                )
+              }
+              
+              if (identical(mode_choice, "Swing Decisions")) {
+                return(build_swing_decisions(df_tbl))
+              }
+              
+              results_df <- build_results_table(df_tbl)
+              num_cols <- c("PA","AB","AVG","SLG","OBP","OPS","xWOBA","xISO","BABIP",
+                            "Swing%","Whiff%","GB%","K%","BB%","Barrel%","EV","LA")
+              results_df <- results_df %>%
+                dplyr::mutate(dplyr::across(dplyr::all_of(num_cols), ~ suppressWarnings(as.numeric(.)))) %>%
+                {
+                  df_tmp <- .
+                  pct_cols  <- c("Swing%","Whiff%","GB%","K%","BB%","Barrel%")
+                  rate_cols <- c("AVG","SLG","OBP","OPS","xWOBA","xISO","BABIP")
+                  for (nm in pct_cols) if (nm %in% names(df_tmp)) df_tmp[[nm]] <- ifelse(is.finite(df_tmp[[nm]]), paste0(round(df_tmp[[nm]]*100,1), "%"), "")
+                  for (nm in rate_cols) if (nm %in% names(df_tmp)) df_tmp[[nm]] <- ifelse(is.finite(df_tmp[[nm]]), fmt_avg_local(df_tmp[[nm]]), "")
+                  if ("EV" %in% names(df_tmp)) df_tmp$EV <- ifelse(is.finite(df_tmp$EV), round(df_tmp$EV,1), "")
+                  if ("LA" %in% names(df_tmp)) df_tmp$LA <- ifelse(is.finite(df_tmp$LA), round(df_tmp$LA,1), "")
+                  df_tmp
+                }
+              
+              visible_cols_base <- c(split_col_name, "PA", "AB", "AVG", "SLG", "OBP", "OPS", "xWOBA", "xISO", "BABIP",
+                                     "Swing%", "Whiff%", "GB%", "K%", "BB%", "Barrel%", "EV", "LA")
+              if (identical(mode_choice, "Custom")) {
+                custom_cols <- input[[paste0("cell_table_custom_cols_", settings_cell_id)]] %||% visible_cols_base[-1]
+                custom_cols <- custom_cols[custom_cols %in% visible_cols_base]
+                visible_cols <- unique(c(split_col_name, custom_cols))
+              } else {
+                visible_cols <- visible_cols_base
+              }
+              
+              datatable_with_colvis(
+                results_df,
+                lock = split_col_name,
+                remember = FALSE,
+                default_visible = intersect(visible_cols, names(results_df)),
+                mode = NULL,
+                enable_colors = FALSE
+              )
+            } else {
+              # PITCHING MODE: Use existing logic
+              if (!"Strike" %in% names(df_tbl)) df_tbl$Strike <- 0
+              if (!"Whiff" %in% names(df_tbl))  df_tbl$Whiff  <- 0
+              if (!"SplitColumn" %in% names(df_tbl)) df_tbl$SplitColumn <- df_tbl$TaggedPitchType
+              split_choice <- fsel
+              df_tbl <- apply_split_by(df_tbl, split_choice)
+              if (identical(split_choice, "Pitch Types")) {
+                ord <- names(all_colors)
+                df_tbl$SplitColumn <- as.character(df_tbl$SplitColumn)
+                extra <- setdiff(unique(df_tbl$SplitColumn), ord)
+                df_tbl$SplitColumn <- factor(df_tbl$SplitColumn, levels = c(ord, extra))
+                df_tbl$SplitColumn <- as.character(df_tbl$SplitColumn)
+              }
+              attr(df_tbl, "split_choice") <- split_choice
+              if (!"SplitColumn" %in% names(df_tbl)) df_tbl$SplitColumn <- df_tbl$TaggedPitchType
+              if (!nrow(df_tbl)) return(data.frame(Message = "No data"))
+              
+              # resolve table mode, including saved customs
+              mode_choice <- input[[paste0("cell_table_mode_", settings_cell_id)]] %||% "Stuff"
+              res_mode <- resolve_table_mode_global(mode_choice, NULL)
+              mode <- res_mode$mode
+              custom_cols <- res_mode$cols
+              enable_colors <- isTRUE(input[[paste0("cell_color_", settings_cell_id)]])
+              
+              # Use the global .dp_like_table function (defined in main server, populated by comparison suite)
+              if (exists(".dp_like_table", inherits = TRUE) && is.function(.dp_like_table)) {
+                .dp_like_table(df_tbl, mode, custom_cols, enable_colors = enable_colors)
+              } else {
+                # Fallback: show message
+                DT::datatable(
+                  data.frame(Message = "Table builder loading. Please refresh if this persists."),
+                  options = list(dom = 't', autoWidth = FALSE), rownames = FALSE
+                )
+              }
+            }
           }, error = function(e) {
+            # If any error during rendering, show a helpful message
             message("Error rendering custom reports table: ", e$message)
             DT::datatable(
               data.frame(Message = paste("Error rendering table:", e$message)),
-              options = list(dom = 't', autoWidth = FALSE),
-              rownames = FALSE
+              options = list(dom = 't', autoWidth = FALSE), rownames = FALSE
             )
           })
         })
@@ -17776,9 +17130,8 @@ custom_reports_server <- function(id) {
         })
         return(ggiraph::girafeOutput(ns(out_id), height = "280px"))
       }
-      # Fallback if chart type is not recognized
       output[[out_id]] <- renderUI({ div("Unsupported selection") })
-      return(uiOutput(ns(out_id)))
+      uiOutput(ns(out_id))
     }
     
     # Outputs for each cell (optimized to only create observers once per cell)
@@ -17807,73 +17160,21 @@ custom_reports_server <- function(id) {
               cell_data <- reactive({
                 # Only re-compute when these specific inputs change
                 # NOTE: Do NOT include cell_title here - it causes re-render on every keystroke
+                input[[paste0("cell_type_", id)]]
+                input[[paste0("cell_filter_", id)]]
+                input[[paste0("cell_table_mode_", id)]]
                 
-                # For Multi-Player mode, rows 2+ should use Row 1's settings
-                is_multi_player <- input$report_scope == "Multi-Player"
-                row_num <- as.integer(sub("r(\\d+)c\\d+", "\\1", id))
-                col_num <- as.integer(sub("r\\d+c(\\d+)", "\\1", id))
-                
-                # Determine which cell's inputs to monitor
-                settings_id <- if (is_multi_player && row_num > 1) {
-                  paste0("r1c", col_num)
-                } else {
-                  id
-                }
-                
-                # Monitor these inputs to trigger re-rendering
-                input[[paste0("cell_type_", settings_id)]]
-                input[[paste0("cell_filter_", settings_id)]]
-                input[[paste0("cell_table_mode_", settings_id)]]
-                input[[paste0("cell_color_", settings_id)]]
-                input[[paste0("cell_heat_stat_", settings_id)]]
-                input[[paste0("cell_table_custom_cols_", settings_id)]]
-                
-                # Also monitor filter values to trigger data updates
-                input[[paste0("cell_dates_", settings_id)]]
-                input[[paste0("cell_session_", settings_id)]]
-                input[[paste0("cell_pitch_types_", settings_id)]]
-                input[[paste0("cell_batter_side_", settings_id)]]
-                input[[paste0("cell_pitcher_hand_", settings_id)]]
-                input[[paste0("cell_results_", settings_id)]]
-                input[[paste0("cell_qp_", settings_id)]]
-                input[[paste0("cell_count_", settings_id)]]
-                input[[paste0("cell_after_count_", settings_id)]]
-                input[[paste0("cell_zone_", settings_id)]]
-                input[[paste0("cell_velo_min_", settings_id)]]
-                input[[paste0("cell_velo_max_", settings_id)]]
-                input[[paste0("cell_ivb_min_", settings_id)]]
-                input[[paste0("cell_ivb_max_", settings_id)]]
-                input[[paste0("cell_hb_min_", settings_id)]]
-                input[[paste0("cell_hb_max_", settings_id)]]
-                
-                # For Multi-Player mode, also monitor the row player selection
-                if (is_multi_player) {
-                  input[[paste0("row_player_", row_num)]]
-                }
-                
-                # Return the actual values
+                # Isolate to prevent reactive dependencies on filters
                 list(
-                  type = input[[paste0("cell_type_", settings_id)]],
-                  filter = input[[paste0("cell_filter_", settings_id)]],
-                  mode = input[[paste0("cell_table_mode_", settings_id)]],
-                  color = input[[paste0("cell_color_", settings_id)]],
-                  heat_stat = input[[paste0("cell_heat_stat_", settings_id)]],
-                  custom_cols = input[[paste0("cell_table_custom_cols_", settings_id)]]
+                  type = input[[paste0("cell_type_", id)]],
+                  filter = input[[paste0("cell_filter_", id)]],
+                  mode = input[[paste0("cell_table_mode_", id)]]
                 )
               }) %>% debounce(300)  # Slightly increased for stability
               
-              # Update title display using delayed shinyjs::html
+              # Update title display using delayed shinyjs::html (throttled to prevent focus loss)
               # In Multi-Player mode, rows 2+ use Row 1's title
-              # Use cell_titles instead of current_cells to avoid dependency on full cell data
               observe({
-                # Track control visibility and grid size so we can repaint the title after DOM updates
-                input[[paste0("cell_show_controls_", id)]]
-                input$report_rows
-                input$report_cols
-
-                titles <- cell_titles()
-                cells_snapshot <- current_cells()
-                
                 # Determine which title to use
                 is_multi_player <- input$report_scope == "Multi-Player"
                 
@@ -17884,17 +17185,15 @@ custom_reports_server <- function(id) {
                 # For rows 2+ in Multi-Player mode, use Row 1's title
                 if (is_multi_player && row_num > 1) {
                   title_cell_id <- paste0("r1c", col_num)
-                  title_entry <- cells_snapshot[[title_cell_id]] %||% list()
-                  title_val <- title_entry$title %||% titles[[title_cell_id]] %||% ""
+                  title_val <- input[[paste0("cell_title_", title_cell_id)]]
                 } else {
-                  title_entry <- cells_snapshot[[id]] %||% list()
-                  title_val <- title_entry$title %||% titles[[id]] %||% ""
+                  title_val <- input[[paste0("cell_title_", id)]]
                 }
                 
                 shinyjs::delay(50, {
                   shinyjs::html(
                     id = paste0("cell_title_display_", id),
-                    html = title_val
+                    html = title_val %||% ""
                   )
                 })
               })
@@ -18411,26 +17710,6 @@ video_upload_ui <- function() {
           actionButton("video_upload_submit", "Click to Upload", class = "btn-success"),
           br(), br(),
           uiOutput("video_upload_upload_status")
-        ),
-        wellPanel(
-          h4("Upload Full-Game Video"),
-          fileInput("video_upload_full_game_video", NULL,
-                    multiple = FALSE,
-                    accept = c(".mp4", ".mov", ".avi", ".mkv"),
-                    buttonLabel = "Select video"),
-          textInput(
-            "video_upload_full_game_start_time",
-            "First clip start time (HH:MM:SS.sss)",
-            value = "00:00:00"
-          ),
-          tags$small(
-            "Provide the point in the raw video that matches the first Time entry in the CSV. ",
-            "The Time column drives the offsets, and each generated clip is 6 seconds long."
-          ),
-          br(),
-          actionButton("video_upload_full_game_submit", "Upload Full Game Video", class = "btn-warning"),
-          br(), br(),
-          uiOutput("video_upload_full_game_status")
         )
       ),
       column(
@@ -18446,10 +17725,31 @@ video_upload_ui <- function() {
 }
 
 workload_panel_ui <- function() {
-  fluidRow(
-    column(
-      width = 12,
-      uiOutput("workload_table")
+  tagList(
+    br(),
+    fluidRow(
+      column(
+        width = 12,
+        wellPanel(
+          h3("Workload"),
+          p(
+            "Acute-chronic ratios, recent workloads, and live pitch readiness help keep arms healthy.",
+            "Use the dropdowns in the grid below to describe the type of throwing day for every player/date."
+          ),
+          tags$small("Select the letter code that matches the day (legend is provided below) and type throws only for Bullpen or Live days; those inputs persist between deployments."),
+          tags$div(
+            style = "margin-top:10px; font-size:0.85rem;",
+            tags$strong("Player filter"),
+            tags$span(" (driven by the Pitching sidebar selection)")
+          )
+        )
+      )
+    ),
+    fluidRow(
+      column(
+        width = 12,
+        uiOutput("workload_table")
+      )
     )
   )
 }
@@ -19992,7 +19292,6 @@ server <- function(input, output, session) {
   video_sessions <- reactiveVal(load_video_assignments())
   video_feedback <- reactiveVal(NULL)
   video_upload_upload_feedback <- reactiveVal(NULL)
-  video_full_game_feedback <- reactiveVal(NULL)
 
   build_team_label <- function(home, away) {
     mapply(function(h, a) {
@@ -20085,15 +19384,10 @@ server <- function(input, output, session) {
   observeEvent(input$video_session, {
     video_feedback(NULL)
     video_upload_upload_feedback(NULL)
-    video_full_game_feedback(NULL)
   }, ignoreInit = TRUE)
 
   observeEvent(input$video_upload_files, {
     video_upload_upload_feedback(NULL)
-  }, ignoreInit = TRUE)
-
-  observeEvent(input$video_upload_full_game_video, {
-    video_full_game_feedback(NULL)
   }, ignoreInit = TRUE)
 
   observeEvent(input$video_register, {
@@ -20195,114 +19489,6 @@ server <- function(input, output, session) {
     })
   }, ignoreNULL = TRUE)
 
-  observeEvent(input$video_upload_full_game_submit, {
-    video_full_game_feedback(NULL)
-    req(input$video_session)
-    file_info <- input$video_upload_full_game_video
-    if (is.null(file_info) || !nrow(file_info)) {
-      video_full_game_feedback(list(type = "error",
-                                    text = "Attach a video before uploading."))
-      return()
-    }
-    start_seconds <- parse_timecode_seconds(input$video_upload_full_game_start_time)[1]
-    if (is.na(start_seconds)) {
-      video_full_game_feedback(list(type = "error",
-                                    text = "First clip start time is not a valid HH:MM:SS value."))
-      return()
-    }
-    ffmpeg_path <- Sys.which("ffmpeg")
-    if (!nzchar(ffmpeg_path)) {
-      video_full_game_feedback(list(type = "error",
-                                    text = "ffmpeg is not available; install it to generate clips."))
-      return()
-    }
-    session_rows <- find_session_rows(data_parent, input$video_session)
-    if (!nrow(session_rows)) {
-      video_full_game_feedback(list(type = "error",
-                                    text = "Could not resolve that TrackMan session."))
-      return()
-    }
-    if (!"Time" %in% names(session_rows)) {
-      video_full_game_feedback(list(type = "error",
-                                    text = "Session CSV is missing the Time column."))
-      return()
-    }
-    time_values <- parse_timecode_seconds(session_rows$Time)
-    valid_mask <- !is.na(time_values)
-    if (!any(valid_mask)) {
-      video_full_game_feedback(list(type = "error",
-                                    text = "No valid Time values were found for that session."))
-      return()
-    }
-    skipped <- sum(!valid_mask)
-    ordered_rows <- session_rows[valid_mask, , drop = FALSE]
-    ordered_rows$time_seconds <- time_values[valid_mask]
-    ordered_rows <- ordered_rows %>%
-      dplyr::arrange(time_seconds, PlayID)
-    if (!nrow(ordered_rows)) {
-      video_full_game_feedback(list(type = "error",
-                                    text = "No pitches with valid Time data remain for clipping."))
-      return()
-    }
-    clip_count <- nrow(ordered_rows)
-    clip_duration <- 6
-    video_path <- file_info$datapath[1]
-    uploads <- vector("list", clip_count)
-    tryCatch({
-      withProgress(message = "Generating clips from full game", value = 0, {
-        for (i in seq_len(clip_count)) {
-          clip_offset <- start_seconds +
-            (ordered_rows$time_seconds[i] - ordered_rows$time_seconds[1])
-          if (clip_offset < 0) clip_offset <- 0
-          clip_path <- tempfile(fileext = ".mp4")
-          tryCatch({
-            ffmpeg_args <- c(
-              "-ss", format_seconds_for_ffmpeg(clip_offset),
-              "-i", video_path,
-              "-t", as.character(clip_duration),
-              "-c", "copy",
-              "-avoid_negative_ts", "make_zero",
-              "-y", clip_path
-            )
-            ffmpeg_output <- system2(ffmpeg_path, ffmpeg_args, stdout = FALSE, stderr = TRUE)
-            ffmpeg_status <- attr(ffmpeg_output, "status")
-            if (!is.null(ffmpeg_status) && ffmpeg_status != 0) {
-              reason <- paste(ffmpeg_output, collapse = "\n")
-              stop(paste0("ffmpeg failed for clip ", i, ": ", reason))
-            }
-            upload_result <- upload_media_cloudinary(clip_path)
-            uploads[[i]] <- tibble::tibble(
-              file_name = paste0("clip-", ordered_rows$PlayID[i], ".mp4"),
-              cloudinary_url = upload_result$url,
-              cloudinary_public_id = upload_result$public_id
-            )
-          }, finally = {
-            if (file.exists(clip_path)) unlink(clip_path)
-          })
-          incProgress(1 / clip_count, detail = sprintf("Clip %d/%d", i, clip_count))
-        }
-      })
-      manifest <- dplyr::bind_rows(uploads)
-      map_manifest_to_session(
-        session_rows = ordered_rows,
-        manifest = manifest,
-        session_id = input$video_session,
-        slot = "VideoClip2",
-        name = "ManualCamera",
-        target = "ManualUpload",
-        type = "ManualVideo",
-        map_path = file.path("data", "video_map.csv")
-      )
-      success_text <- paste0("Generated and uploaded ", nrow(manifest), " clips from the full-game video.")
-      if (skipped > 0) {
-        success_text <- paste0(success_text, " Skipped ", skipped, " pitches without Time data.")
-      }
-      video_full_game_feedback(list(type = "success", text = success_text))
-    }, error = function(err) {
-      video_full_game_feedback(list(type = "error", text = err$message))
-    })
-  }, ignoreNULL = TRUE)
-
   output$video_upload_status <- renderUI({
     msg <- video_feedback()
     if (is.null(msg)) return(NULL)
@@ -20312,13 +19498,6 @@ server <- function(input, output, session) {
 
   output$video_upload_upload_status <- renderUI({
     msg <- video_upload_upload_feedback()
-    if (is.null(msg)) return(NULL)
-    cls <- if (identical(msg$type, "error")) "alert alert-danger" else "alert alert-success"
-    tags$div(class = cls, style = "margin-top:8px;", msg$text)
-  })
-
-  output$video_upload_full_game_status <- renderUI({
-    msg <- video_full_game_feedback()
     if (is.null(msg)) return(NULL)
     cls <- if (identical(msg$type, "error")) "alert alert-danger" else "alert alert-success"
     tags$div(class = cls, style = "margin-top:8px;", msg$text)
@@ -20354,7 +19533,6 @@ server <- function(input, output, session) {
   # --- Workload module ---
   workload_manual_entries <- reactiveVal(load_workload_manual_entries())
   workload_type_defaults <- list(
-    Off = list(throws = 0, label = "Off (No throwing)"),
     F = list(throws = 25, label = "Low (Recovery)"),
     D = list(throws = 40, label = "Medium (Normal Catch)"),
     C = list(throws = 40, label = "Medium (w/ Touch and Feel)"),
@@ -20364,7 +19542,6 @@ server <- function(input, output, session) {
     `A+` = list(throws = NA, label = "Live Pitching")
   )
   workload_type_weights <- c(
-    Off = 0,
     F = 0.55,
     D = 0.75,
     C = 0.80,
@@ -20374,7 +19551,6 @@ server <- function(input, output, session) {
     `A+` = 1.00
   )
   workload_type_colors <- c(
-    Off = "#6c757d",
     F = "#dc3545",
     D = "#ffc107",
     C = "#ffc107",
@@ -20465,14 +19641,13 @@ server <- function(input, output, session) {
         type_labels = workload_type_labels
       ))
     }
-    display_dates <- rev(workload_date_range())
+    display_dates <- workload_date_range()
     manual_entries <- manual_raw %>%
       dplyr::filter(pitcher %in% players) %>%
       dplyr::rename(
         manual_type = type_code,
         manual_live_throws = manual_throws
-      ) %>%
-      dplyr::select(pitcher, date, manual_type, manual_live_throws)
+      )
     base <- tidyr::expand_grid(Pitcher = players, Date = display_dates)
     daily_summary <- workload_daily_summary()
     combined <- base %>%
@@ -20541,16 +19716,13 @@ server <- function(input, output, session) {
         ac_ratio,
         live_pitch_range
       )
-    ordered_dates <- display_dates
     type_wide <- combined %>%
-      dplyr::filter(Date %in% ordered_dates) %>%
-      dplyr::mutate(Date = factor(Date, levels = ordered_dates)) %>%
+      dplyr::filter(Date %in% display_dates) %>%
       dplyr::select(Pitcher, Date, selected_type) %>%
       tidyr::pivot_wider(names_from = Date, values_from = selected_type) %>%
       dplyr::mutate(dplyr::across(-Pitcher, ~dplyr::coalesce(., "")))
     manual_live_wide <- combined %>%
-      dplyr::filter(Date %in% ordered_dates) %>%
-      dplyr::mutate(Date = factor(Date, levels = ordered_dates)) %>%
+      dplyr::filter(Date %in% display_dates) %>%
       dplyr::select(Pitcher, Date, manual_live_throws) %>%
       tidyr::pivot_wider(names_from = Date, values_from = manual_live_throws)
     table_df <- per_player %>%
@@ -20594,6 +19766,15 @@ server <- function(input, output, session) {
     header_cells <- c(
       list(tags$th("Player"), tags$th("AC Ratio"), tags$th("Live Pitch Range")),
       lapply(info$dates, function(dt) tags$th(format(dt, "%-m/%-d")))
+    )
+    type_key <- tags$ul(
+      class = "list-inline",
+      lapply(names(info$type_labels), function(code) {
+        tags$li(
+          class = "list-inline-item me-3",
+          tags$strong(code), ": ", info$type_labels[[code]]
+        )
+      })
     )
     rows <- lapply(seq_len(nrow(info$df)), function(row_idx) {
       player <- info$df$Player[row_idx]
@@ -20645,7 +19826,7 @@ server <- function(input, output, session) {
           onchange = "workloadManualChange(this)"
         )
         tags$td(
-          style = "min-width:160px; padding:8px; text-align:center; vertical-align:middle;",
+          style = "min-width:160px; padding:8px;",
           tags$div(select_tag),
           tags$div(
             style = "margin-top:2px;",
@@ -20655,32 +19836,22 @@ server <- function(input, output, session) {
         )
       })
       tags$tr(
-        tags$td(player, style = "text-align:center; vertical-align:middle;"),
-        tags$td(style = paste0(ac_style, " text-align:center; vertical-align:middle;"), if (is.na(ac_val)) "\u2014" else sprintf("%.2f", ac_val)),
-        tags$td(live_range, style = "text-align:center; vertical-align:middle;"),
+        tags$td(player),
+        tags$td(style = ac_style, if (is.na(ac_val)) "\u2014" else sprintf("%.2f", ac_val)),
+        tags$td(live_range),
         date_cells
       )
     })
-    style_block <- tags$style(HTML("
-      .workload-table th, .workload-table td { text-align:center; vertical-align:middle; color:#000; }
-      .workload-table .form-select, .workload-table .form-control { text-align:center; color:#000; }
-      .workload-table .form-select option { color:#000; }
-      .workload-table tbody tr { background-color: transparent; }
-      .workload-table tbody tr:nth-of-type(odd) { background-color: rgba(0, 0, 0, 0.02); }
-      body.theme-dark .workload-table.table-striped tbody tr:nth-of-type(odd) { background-color: rgba(255, 255, 255, 0.04) !important; }
-      body.theme-dark .workload-table.table-striped tbody tr:nth-of-type(even) { background-color: rgba(255, 255, 255, 0.02) !important; }
-      body.theme-dark .workload-table th, body.theme-dark .workload-table td { border-color: rgba(255, 255, 255, 0.15); color:#000; }
-    "))
     script <- tags$script(HTML("
       (function() {
         function toggleManual(select) {
           var player = select.dataset.player;
           var date = select.dataset.date;
-          var manual = document.querySelector('input.workload-manual-input[data-player=\"' + player + '\"][data-date=\"' + date + '\"]');
+          var manual = document.querySelector('input.workload-manual-input[data-player="' + player + '"][data-date="' + date + '"]');
           var enabled = ['B+','A','A+'].includes(select.value);
           if (manual) {
             manual.disabled = !enabled;
-            if (!enabled && manual.value !== '') manual.value = '';
+            if (!enabled) manual.value = '';
           }
         }
         window.workloadTypeChange = function(select) {
@@ -20715,11 +19886,14 @@ server <- function(input, output, session) {
     header_row <- do.call(tags$tr, header_cells)
     body_rows <- do.call(tagList, rows)
     tags$div(
-      style_block,
+      tags$div(
+        tags$strong("Legend:"),
+        type_key
+      ),
       tags$div(
         class = "table-responsive",
         tags$table(
-          class = "table table-striped table-bordered workload-table",
+          class = "table table-striped table-bordered",
           tags$thead(header_row),
           tags$tbody(body_rows)
         )
@@ -24111,76 +23285,7 @@ server <- function(input, output, session) {
             WHIP     = ifelse(is.finite(WHIP_tmp), round(WHIP_tmp, 2), NA_real_)
           ) %>%
           dplyr::left_join(sc_by_type, by = "SplitColumn") %>%
-          dplyr::left_join(extras, by = "SplitColumn")
-        
-        # Calculate and join discipline stats (for count columns)
-        disc_stats <- tryCatch({
-          df_with_split <- df
-          if (!"SplitColumn" %in% names(df_with_split)) {
-            df_with_split$SplitColumn <- if (split_col_name == "Pitch" && "TaggedPitchType" %in% names(df)) {
-              as.character(df$TaggedPitchType)
-            } else if (split_col_name %in% names(df)) {
-              as.character(df[[split_col_name]])
-            } else {
-              "All"
-            }
-          }
-          
-          # Simplified discipline stats calculation
-          df_with_split %>%
-            dplyr::group_by(SplitColumn) %>%
-            dplyr::summarise(
-              Swings = sum(PitchCall %in% swing_levels, na.rm = TRUE),
-              FPS = sum(Balls == 0 & Strikes == 0 & 
-                        PitchCall %in% c("StrikeCalled","StrikeSwinging","FoulBall","FoulBallNotFieldable","FoulBallFieldable","InPlay"), 
-                        na.rm = TRUE),
-              `Called-S` = sum(PitchCall == "StrikeCalled", na.rm = TRUE),
-              Takes = sum(PitchCall %in% c("BallCalled","StrikeCalled"), na.rm = TRUE),
-              Chases = sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                          (PlateLocSide < ZONE_LEFT | PlateLocSide > ZONE_RIGHT | 
-                           PlateLocHeight < ZONE_BOTTOM | PlateLocHeight > ZONE_TOP) &
-                          PitchCall %in% swing_levels, na.rm = TRUE),
-              GoZoneSw = sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                            PlateLocSide >= ZONE_LEFT & PlateLocSide <= ZONE_RIGHT &
-                            PlateLocHeight >= ZONE_BOTTOM & PlateLocHeight <= ZONE_TOP &
-                            PitchCall %in% swing_levels, na.rm = TRUE),
-              IZswings = sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                            PlateLocSide >= ZONE_LEFT & PlateLocSide <= ZONE_RIGHT &
-                            PlateLocHeight >= ZONE_BOTTOM & PlateLocHeight <= ZONE_TOP &
-                            PitchCall %in% swing_levels, na.rm = TRUE),
-              EdgeSwings = sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                              (abs(PlateLocSide - ZONE_LEFT) < 0.15 | abs(PlateLocSide - ZONE_RIGHT) < 0.15 |
-                               abs(PlateLocHeight - ZONE_BOTTOM) < 0.15 | abs(PlateLocHeight - ZONE_TOP) < 0.15) &
-                              PitchCall %in% swing_levels, na.rm = TRUE),
-              PosSD = {
-                green_xmin <- (ZONE_LEFT + ZONE_RIGHT)/2 - 7/24
-                green_xmax <- (ZONE_LEFT + ZONE_RIGHT)/2 + 7/24
-                green_ymin <- (ZONE_BOTTOM + ZONE_TOP)/2 - 7/24
-                green_ymax <- (ZONE_BOTTOM + ZONE_TOP)/2 + 7/24
-                sum(dplyr::case_when(
-                  is.na(PitchCall) ~ 0,
-                  PitchCall %in% swing_levels & 
-                    !is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                    PlateLocSide >= green_xmin & PlateLocSide <= green_xmax &
-                    PlateLocHeight >= green_ymin & PlateLocHeight <= green_ymax ~ 1,
-                  !(PitchCall %in% swing_levels) &
-                    !is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                    (PlateLocSide < ZONE_LEFT | PlateLocSide > ZONE_RIGHT |
-                     PlateLocHeight < ZONE_BOTTOM | PlateLocHeight > ZONE_TOP) ~ 1,
-                  TRUE ~ 0
-                ), na.rm = TRUE)
-              },
-              .groups = "drop"
-            )
-        }, error = function(e) NULL)
-        
-        # Join discipline stats if available
-        if (!is.null(disc_stats) && nrow(disc_stats) > 0) {
-          res_pt <- res_pt %>% dplyr::left_join(disc_stats, by = "SplitColumn")
-        }
-        
-        # Final transmute with count columns
-        res_pt <- res_pt %>%
+          dplyr::left_join(extras, by = "SplitColumn") %>%
           dplyr::transmute(
             !!split_col_name := as.character(SplitColumn),
             `#`, Usage, BF, `RV/100`, IP = ip_fmt(IP_raw), FIP, WHIP,
@@ -24189,17 +23294,7 @@ server <- function(input, output, session) {
             `Swing%`, `Whiff%`, `CSW%`, `GB%`,
             `K%` = safe_div(Kct, PA), `BB%` = safe_div(BBct, PA),
             `Barrel%`, EV, LA,
-            `Pitching+` = PitchingP,
-            # Add count columns if they exist
-            Swings = if ("Swings" %in% names(.)) Swings else NA_integer_,
-            FPS = if ("FPS" %in% names(.)) FPS else NA_integer_,
-            `Called-S` = if ("Called-S" %in% names(.)) `Called-S` else NA_integer_,
-            Takes = if ("Takes" %in% names(.)) Takes else NA_integer_,
-            Chases = if ("Chases" %in% names(.)) Chases else NA_integer_,
-            GoZoneSw = if ("GoZoneSw" %in% names(.)) GoZoneSw else NA_integer_,
-            IZswings = if ("IZswings" %in% names(.)) IZswings else NA_integer_,
-            EdgeSwings = if ("EdgeSwings" %in% names(.)) EdgeSwings else NA_integer_,
-            PosSD = if ("PosSD" %in% names(.)) PosSD else NA_integer_
+            `Pitching+` = PitchingP
           )
         
         # --- ALL row (ungrouped, same definitions) ---
@@ -24242,14 +23337,6 @@ server <- function(input, output, session) {
         
         # For Swing% calculation, use total pitches as denominator (same as individual pitch types)
         total_pitches_all <- total_pitches
-        all_swings <- sum(!is.na(df$PitchCall) & df$PitchCall %in% swing_levels, na.rm = TRUE)
-        all_whiffs <- sum(!is.na(df$PitchCall) & df$PitchCall == "StrikeSwinging", na.rm = TRUE)
-        all_barrels <- sum(
-          df$SessionType == "Live" & df$PitchCall == "InPlay" &
-            is.finite(df$ExitSpeed) & df$ExitSpeed >= 95 &
-            is.finite(df$Angle) & df$Angle >= 10 & df$Angle <= 35,
-          na.rm = TRUE
-        )
         
         # Create All row with dynamic column name
         all_row_data <- list(
@@ -24274,10 +23361,7 @@ server <- function(input, output, session) {
           `Barrel%`= NA_real_,
           EV = nz_mean(bbe$ExitSpeed),
           LA = nz_mean(bbe$Angle),
-          `Pitching+` = pitc_all,
-          Swings = all_swings,
-          Whiffs = all_whiffs,
-          Barrels = all_barrels
+          `Pitching+` = pitc_all
         )
         # Add the split column name dynamically
         all_row_data[[split_col_name]] <- "All"
@@ -24902,66 +23986,6 @@ server <- function(input, output, session) {
         summ <- summ %>% dplyr::left_join(qp_by_type, by = c("PitchType" = "SplitColumn"))
       }
       
-      # Calculate and join discipline count columns for Custom mode
-      disc_counts <- tryCatch({
-        swing_levels <- c("StrikeSwinging","FoulBallNotFieldable","FoulBallFieldable","InPlay")
-        df %>%
-          dplyr::group_by(SplitColumn) %>%
-          dplyr::summarise(
-            Swings = sum(PitchCall %in% swing_levels, na.rm = TRUE),
-            Whiffs = sum(PitchCall == "StrikeSwinging", na.rm = TRUE),
-            FPS = sum(Balls == 0 & Strikes == 0 & 
-                      PitchCall %in% c("StrikeCalled","StrikeSwinging","FoulBall","FoulBallNotFieldable","FoulBallFieldable","InPlay"), 
-                      na.rm = TRUE),
-            `Called-S` = sum(PitchCall == "StrikeCalled", na.rm = TRUE),
-            Takes = sum(PitchCall %in% c("BallCalled","StrikeCalled"), na.rm = TRUE),
-            Chases = sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                        (PlateLocSide < ZONE_LEFT | PlateLocSide > ZONE_RIGHT | 
-                         PlateLocHeight < ZONE_BOTTOM | PlateLocHeight > ZONE_TOP) &
-                        PitchCall %in% swing_levels, na.rm = TRUE),
-            GoZoneSw = sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                          PlateLocSide >= ZONE_LEFT & PlateLocSide <= ZONE_RIGHT &
-                          PlateLocHeight >= ZONE_BOTTOM & PlateLocHeight <= ZONE_TOP &
-                          PitchCall %in% swing_levels, na.rm = TRUE),
-            IZswings = sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                          PlateLocSide >= ZONE_LEFT & PlateLocSide <= ZONE_RIGHT &
-                          PlateLocHeight >= ZONE_BOTTOM & PlateLocHeight <= ZONE_TOP &
-                          PitchCall %in% swing_levels, na.rm = TRUE),
-            EdgeSwings = sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                            (abs(PlateLocSide - ZONE_LEFT) < 0.15 | abs(PlateLocSide - ZONE_RIGHT) < 0.15 |
-                             abs(PlateLocHeight - ZONE_BOTTOM) < 0.15 | abs(PlateLocHeight - ZONE_TOP) < 0.15) &
-                            PitchCall %in% swing_levels, na.rm = TRUE),
-            PosSD = {
-              green_xmin <- (ZONE_LEFT + ZONE_RIGHT)/2 - 7/24
-              green_xmax <- (ZONE_LEFT + ZONE_RIGHT)/2 + 7/24
-              green_ymin <- (ZONE_BOTTOM + ZONE_TOP)/2 - 7/24
-              green_ymax <- (ZONE_BOTTOM + ZONE_TOP)/2 + 7/24
-              sum(dplyr::case_when(
-                is.na(PitchCall) ~ 0,
-                PitchCall %in% swing_levels & 
-                  !is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                  PlateLocSide >= green_xmin & PlateLocSide <= green_xmax &
-                  PlateLocHeight >= green_ymin & PlateLocHeight <= green_ymax ~ 1,
-                !(PitchCall %in% swing_levels) &
-                  !is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                  (PlateLocSide < ZONE_LEFT | PlateLocSide > ZONE_RIGHT |
-                   PlateLocHeight < ZONE_BOTTOM | PlateLocHeight > ZONE_TOP) ~ 1,
-                TRUE ~ 0
-              ), na.rm = TRUE)
-            },
-            .groups = "drop"
-          ) %>%
-          dplyr::rename(PitchType = SplitColumn)
-      }, error = function(e) {
-        message("Error calculating discipline count columns: ", conditionMessage(e))
-        NULL
-      })
-      
-      # Join discipline counts if available
-      if (!is.null(disc_counts) && nrow(disc_counts) > 0) {
-        summ <- summ %>% dplyr::left_join(disc_counts, by = "PitchType")
-      }
-      
       
       # Add Even/Ahead/Behind summary rows if splitting by Count (for non-Results modes)
       state_one_one_rows <- list()
@@ -25087,47 +24111,7 @@ server <- function(input, output, session) {
             SwingPercent  = swing_pct_all,
             WhiffPercent  = safe_pct(sw, den),
             EV = ev_all, LA = la_all,
-            `Stuff+` = stuff_all, `Ctrl+` = ctrl_all, `QP+` = qp_all,
-            # Add count columns for All row
-            Swings = swings_all,
-            Whiffs = sw,
-            FPS = fps_live,
-            `Called-S` = sum(df$PitchCall == "StrikeCalled", na.rm = TRUE),
-            Takes = sum(df$PitchCall %in% c("BallCalled","StrikeCalled"), na.rm = TRUE),
-            Chases = sum(!is.na(df$PlateLocSide) & !is.na(df$PlateLocHeight) &
-                        (df$PlateLocSide < ZONE_LEFT | df$PlateLocSide > ZONE_RIGHT | 
-                         df$PlateLocHeight < ZONE_BOTTOM | df$PlateLocHeight > ZONE_TOP) &
-                        df$PitchCall %in% swing_levels, na.rm = TRUE),
-            GoZoneSw = sum(!is.na(df$PlateLocSide) & !is.na(df$PlateLocHeight) &
-                          df$PlateLocSide >= ZONE_LEFT & df$PlateLocSide <= ZONE_RIGHT &
-                          df$PlateLocHeight >= ZONE_BOTTOM & df$PlateLocHeight <= ZONE_TOP &
-                          df$PitchCall %in% swing_levels, na.rm = TRUE),
-            IZswings = sum(!is.na(df$PlateLocSide) & !is.na(df$PlateLocHeight) &
-                          df$PlateLocSide >= ZONE_LEFT & df$PlateLocSide <= ZONE_RIGHT &
-                          df$PlateLocHeight >= ZONE_BOTTOM & df$PlateLocHeight <= ZONE_TOP &
-                          df$PitchCall %in% swing_levels, na.rm = TRUE),
-            EdgeSwings = sum(!is.na(df$PlateLocSide) & !is.na(df$PlateLocHeight) &
-                            (abs(df$PlateLocSide - ZONE_LEFT) < 0.15 | abs(df$PlateLocSide - ZONE_RIGHT) < 0.15 |
-                             abs(df$PlateLocHeight - ZONE_BOTTOM) < 0.15 | abs(df$PlateLocHeight - ZONE_TOP) < 0.15) &
-                            df$PitchCall %in% swing_levels, na.rm = TRUE),
-            PosSD = {
-              green_xmin <- (ZONE_LEFT + ZONE_RIGHT)/2 - 7/24
-              green_xmax <- (ZONE_LEFT + ZONE_RIGHT)/2 + 7/24
-              green_ymin <- (ZONE_BOTTOM + ZONE_TOP)/2 - 7/24
-              green_ymax <- (ZONE_BOTTOM + ZONE_TOP)/2 + 7/24
-              sum(dplyr::case_when(
-                is.na(df$PitchCall) ~ 0,
-                df$PitchCall %in% swing_levels & 
-                  !is.na(df$PlateLocSide) & !is.na(df$PlateLocHeight) &
-                  df$PlateLocSide >= green_xmin & df$PlateLocSide <= green_xmax &
-                  df$PlateLocHeight >= green_ymin & df$PlateLocHeight <= green_ymax ~ 1,
-                !(df$PitchCall %in% swing_levels) &
-                  !is.na(df$PlateLocSide) & !is.na(df$PlateLocHeight) &
-                  (df$PlateLocSide < ZONE_LEFT | df$PlateLocSide > ZONE_RIGHT |
-                   df$PlateLocHeight < ZONE_BOTTOM | df$PlateLocHeight > ZONE_TOP) ~ 1,
-                TRUE ~ 0
-              ), na.rm = TRUE)
-            }
+            `Stuff+` = stuff_all, `Ctrl+` = ctrl_all, `QP+` = qp_all
           ) %>% dplyr::mutate(`Pitching+` = round((`Stuff+` + `QP+`)/2, 1))
         }
       )
@@ -25170,9 +24154,7 @@ server <- function(input, output, session) {
           BF,
           Velo, Max, IVB, HB, rTilt, bTilt, SpinEff, Spin, Height, Side, VAA, HAA, Ext,
           `InZone%`, `Comp%`, `Strike%`, `Swing%`, `FPS%`, `Early%`, `Ahead%`, `E+A%`, `1-1W%`, `QP%`, `K%`, `BB%`, `Whiff%`, EV, LA,
-          `Stuff+`, `Ctrl+`, `QP+`, `Pitching+`,
-          # Include count columns
-          dplyr::any_of(c("Swings", "Whiffs", "FPS", "Called-S", "Takes", "Chases", "GoZoneSw", "IZswings", "EdgeSwings", "PosSD"))
+          `Stuff+`, `Ctrl+`, `QP+`, `Pitching+`
         ) %>%
         dplyr::mutate(
           SpinEff = {
@@ -25228,9 +24210,7 @@ server <- function(input, output, session) {
         df_table <- dplyr::select(df_table, -`RV/100`)
       }
       if (identical(mode, "Custom")) {
-        # Only select columns that actually exist in df_table
         order_cols <- unique(c(split_col_name, custom))
-        order_cols <- intersect(order_cols, names(df_table))
         extras <- setdiff(names(df_table), order_cols)
         df_table <- df_table[, c(order_cols, extras), drop = FALSE]
       }
@@ -25238,14 +24218,6 @@ server <- function(input, output, session) {
       # Update visible_set to use dynamic column name
       visible_set <- visible_set_for(mode, custom)
       visible_set <- gsub("^Pitch$", split_col_name, visible_set)
-      
-      # Debug: log visible columns in Custom mode
-      if (identical(mode, "Custom")) {
-        message("Custom mode - Selected columns: ", paste(custom, collapse = ", "))
-        message("Custom mode - Columns in df_table: ", paste(names(df_table), collapse = ", "))
-        message("Custom mode - visible_set: ", paste(visible_set, collapse = ", "))
-        message("Custom mode - Intersection: ", paste(intersect(visible_set, names(df_table)), collapse = ", "))
-      }
       
       build_summary_dt <- function(data, ...) {
         tryCatch(
@@ -25555,76 +24527,7 @@ server <- function(input, output, session) {
           WHIP     = ifelse(is.finite(WHIP_tmp), round(WHIP_tmp, 2), NA_real_)
         ) %>%
         dplyr::left_join(sc_by_type, by = "SplitColumn") %>%
-        dplyr::left_join(extras, by = "SplitColumn")
-      
-      # Calculate and join discipline stats (for count columns)
-      disc_stats <- tryCatch({
-        df_with_split <- df
-        if (!"SplitColumn" %in% names(df_with_split)) {
-          df_with_split$SplitColumn <- if (split_col_name == "Pitch" && "TaggedPitchType" %in% names(df)) {
-            as.character(df$TaggedPitchType)
-          } else if (split_col_name %in% names(df)) {
-            as.character(df[[split_col_name]])
-          } else {
-            "All"
-          }
-        }
-        
-        # Simplified discipline stats calculation
-        df_with_split %>%
-          dplyr::group_by(SplitColumn) %>%
-          dplyr::summarise(
-            Swings = sum(PitchCall %in% swing_levels, na.rm = TRUE),
-            FPS = sum(Balls == 0 & Strikes == 0 & 
-                      PitchCall %in% c("StrikeCalled","StrikeSwinging","FoulBall","FoulBallNotFieldable","FoulBallFieldable","InPlay"), 
-                      na.rm = TRUE),
-            `Called-S` = sum(PitchCall == "StrikeCalled", na.rm = TRUE),
-            Takes = sum(PitchCall %in% c("BallCalled","StrikeCalled"), na.rm = TRUE),
-            Chases = sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                        (PlateLocSide < ZONE_LEFT | PlateLocSide > ZONE_RIGHT | 
-                         PlateLocHeight < ZONE_BOTTOM | PlateLocHeight > ZONE_TOP) &
-                        PitchCall %in% swing_levels, na.rm = TRUE),
-            GoZoneSw = sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                          PlateLocSide >= ZONE_LEFT & PlateLocSide <= ZONE_RIGHT &
-                          PlateLocHeight >= ZONE_BOTTOM & PlateLocHeight <= ZONE_TOP &
-                          PitchCall %in% swing_levels, na.rm = TRUE),
-            IZswings = sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                          PlateLocSide >= ZONE_LEFT & PlateLocSide <= ZONE_RIGHT &
-                          PlateLocHeight >= ZONE_BOTTOM & PlateLocHeight <= ZONE_TOP &
-                          PitchCall %in% swing_levels, na.rm = TRUE),
-            EdgeSwings = sum(!is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                            (abs(PlateLocSide - ZONE_LEFT) < 0.15 | abs(PlateLocSide - ZONE_RIGHT) < 0.15 |
-                             abs(PlateLocHeight - ZONE_BOTTOM) < 0.15 | abs(PlateLocHeight - ZONE_TOP) < 0.15) &
-                            PitchCall %in% swing_levels, na.rm = TRUE),
-            PosSD = {
-              green_xmin <- (ZONE_LEFT + ZONE_RIGHT)/2 - 7/24
-              green_xmax <- (ZONE_LEFT + ZONE_RIGHT)/2 + 7/24
-              green_ymin <- (ZONE_BOTTOM + ZONE_TOP)/2 - 7/24
-              green_ymax <- (ZONE_BOTTOM + ZONE_TOP)/2 + 7/24
-              sum(dplyr::case_when(
-                is.na(PitchCall) ~ 0,
-                PitchCall %in% swing_levels & 
-                  !is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                  PlateLocSide >= green_xmin & PlateLocSide <= green_xmax &
-                  PlateLocHeight >= green_ymin & PlateLocHeight <= green_ymax ~ 1,
-                !(PitchCall %in% swing_levels) &
-                  !is.na(PlateLocSide) & !is.na(PlateLocHeight) &
-                  (PlateLocSide < ZONE_LEFT | PlateLocSide > ZONE_RIGHT |
-                   PlateLocHeight < ZONE_BOTTOM | PlateLocHeight > ZONE_TOP) ~ 1,
-                TRUE ~ 0
-              ), na.rm = TRUE)
-            },
-            .groups = "drop"
-          )
-      }, error = function(e) NULL)
-      
-      # Join discipline stats if available
-      if (!is.null(disc_stats) && nrow(disc_stats) > 0) {
-        res_pt <- res_pt %>% dplyr::left_join(disc_stats, by = "SplitColumn")
-      }
-      
-      # Final transmute with count columns
-      res_pt <- res_pt %>%
+        dplyr::left_join(extras, by = "SplitColumn") %>%
         dplyr::transmute(
           !!split_col_name := as.character(SplitColumn),
           `#`, Usage, BF, `RV/100`, IP = ip_fmt(IP_raw), FIP, WHIP,
@@ -25633,17 +24536,7 @@ server <- function(input, output, session) {
           `Swing%`, `Whiff%`, `CSW%`, `GB%`,
           `K%` = safe_div(Kct, PA), `BB%` = safe_div(BBct, PA),
           `Barrel%`, EV, LA,
-          `Pitching+` = PitchingP,
-          # Add count columns if they exist
-          Swings = if ("Swings" %in% names(.)) Swings else NA_integer_,
-          FPS = if ("FPS" %in% names(.)) FPS else NA_integer_,
-          `Called-S` = if ("Called-S" %in% names(.)) `Called-S` else NA_integer_,
-          Takes = if ("Takes" %in% names(.)) Takes else NA_integer_,
-          Chases = if ("Chases" %in% names(.)) Chases else NA_integer_,
-          GoZoneSw = if ("GoZoneSw" %in% names(.)) GoZoneSw else NA_integer_,
-          IZswings = if ("IZswings" %in% names(.)) IZswings else NA_integer_,
-          EdgeSwings = if ("EdgeSwings" %in% names(.)) EdgeSwings else NA_integer_,
-          PosSD = if ("PosSD" %in% names(.)) PosSD else NA_integer_
+          `Pitching+` = PitchingP
         )
       
       # --- ALL row (same definitions, ungrouped) ---

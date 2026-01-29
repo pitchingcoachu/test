@@ -2,7 +2,7 @@
 
 Use this guide once a school has uploaded their “camera 2” clips and you want to piggy‑back them on the same TrackMan `PlayID` order that the dashboard already uses for the Edger camera.
 
-1. **Record the session in the dashboard** – go to the **Video Upload** tab, pick the TrackMan session that matches the incoming clips, add any context, and save so `data/video_upload_sessions.csv` stores the right `session_id`.
+1. **Record the session in the dashboard** – go to the **Video Upload** tab, pick the TrackMan session that matches the incoming clips, and save so `data/video_upload_sessions.csv` stores the right `session_id`.
 2. **Build a manifest** – create a simple CSV (for example, `uploads/manifest.csv`) with these columns:
    * `cloudinary_url` (required) – the Cloudinary delivery URL you got after the school uploaded the clip for camera 2 (they should upload clips sequentially).
    * `cloudinary_public_id` (optional) – if you already know the public ID, include it so the field in `data/video_map.csv` matches what the cloud UI expects.
@@ -44,7 +44,7 @@ The Video Upload tab now includes an upload control, so schools can select the c
 
 1. Select the session (same as before) and leave the form saved.
 2. Use the “Choose clips” button to add the ordered video files (mp4/mov/avi). Browser uploads preserve order if you name them appropriately (e.g. `001.mp4`, `002.mp4`).
-3. Click **Upload to Cloudinary + Map** – the dashboard will stream each clip to Cloudinary, build the manifest, and map every URL into `data/video_map.csv` automatically.
+3. Click **Click to Upload** – the dashboard will stream each clip to Cloudinary, build the manifest, and map every URL into `data/video_map.csv` automatically.
   4. The success banner below the uploader confirms the mapping and you can refresh the dashboard to see camera 2 available for each pitch.
 
 ### Persisting mappings in Neon
